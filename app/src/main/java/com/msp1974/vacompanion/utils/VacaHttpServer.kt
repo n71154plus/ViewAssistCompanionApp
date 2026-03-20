@@ -169,7 +169,7 @@ class VacaHttpServer(
         val wakeWords = WakeWords(context).getWakeWords()
         val current = config.wakeWord
         val rows = wakeWords.entries.joinToString("") { (key, ww) ->
-            val isBuiltIn = ww.isBuiltIn ?: true
+            val isBuiltIn = ww.builtIn
             val activeBadge = if (key == current) "<span class='badge'>使用中</span>" else ""
             val deleteBtn = if (!isBuiltIn) "<button onclick=\"deleteWW('$key')\">刪除</button>" else ""
             val activateBtn = if (key != current) "<button onclick=\"activateWW('$key')\">啟用</button>" else ""
@@ -255,7 +255,7 @@ function activateWW(key) {
         val wakeWords = WakeWords(context).getWakeWords()
         val current = config.wakeWord
         val items = wakeWords.entries.joinToString(",") { (key, ww) ->
-            """{"key":"$key","name":"${ww.name}","active":${key == current},"builtin":${ww.isBuiltIn ?: true}}"""
+            """{"key":"$key","name":"${ww.name}","active":${key == current},"builtin":${ww.builtIn}}"""
         }
         sendString(socket, """{"wake_words":[$items]}""", "application/json")
     }

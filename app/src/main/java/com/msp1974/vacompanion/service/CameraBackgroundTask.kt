@@ -34,8 +34,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
 import kotlin.math.absoluteValue
@@ -172,7 +170,7 @@ class CameraBackgroundTask(val context: Context) {
                 System.arraycopy(yData, 0, nv21, 0, yData.size)
                 System.arraycopy(uvData, 0, nv21, yData.size, uvData.size)
 
-                val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+                val yuvImage = YuvImage(nv21, 17, image.width, image.height, null)  // 17 = NV21
                 val out = ByteArrayOutputStream()
                 yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 70, out)
                 latestJpegFrame = out.toByteArray()

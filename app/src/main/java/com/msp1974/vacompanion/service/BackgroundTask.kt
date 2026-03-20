@@ -251,26 +251,27 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             "screenSaver" -> {
                 server.sendSetting("screen_saver", event.newValue)
-                "httpServerEnabled" -> {
-                    if (event.newValue as Boolean) {
-                        httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
-                        httpServer?.start()
-                    } else {
-                        httpServer?.stop()
-                        httpServer = null
-                    }
+            }
+            "httpServerEnabled" -> {
+                if (event.newValue as Boolean) {
+                    httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
+                    httpServer?.mjpegFrameProvider = { motionTask.latestJpegFrame }
+                    httpServer?.start()
+                } else {
+                    httpServer?.stop()
+                    httpServer = null
                 }
-                "iconServerEnabled", "mjpegStreamEnabled" -> { /* handled by VacaHttpServer internally */ }
-                "bleProxyEnabled" -> {
-                    if (event.newValue as Boolean) {
-                        bleScanner = bleScanner ?: BleScanner(context)
-                        bleScanner?.onAdvertisement = { data ->
-                            server.pipelineClient?.sendBleAdvertisement(data)
-                        }
-                        bleScanner?.start()
-                    } else {
-                        bleScanner?.stop()
+            }
+            "iconServerEnabled", "mjpegStreamEnabled" -> { /* handled by VacaHttpServer internally */ }
+            "bleProxyEnabled" -> {
+                if (event.newValue as Boolean) {
+                    bleScanner = bleScanner ?: BleScanner(context)
+                    bleScanner?.onAdvertisement = { data ->
+                        server.pipelineClient?.sendBleAdvertisement(data)
                     }
+                    bleScanner?.start()
+                } else {
+                    bleScanner?.stop()
                 }
             }
             "restartZeroconf" -> {

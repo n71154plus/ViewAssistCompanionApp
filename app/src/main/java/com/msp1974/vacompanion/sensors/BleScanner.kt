@@ -38,20 +38,20 @@ class BleScanner(private val context: Context) {
                     put("rssi", result.rssi)
                     put("local_name", record?.deviceName ?: "")
                     putJsonArray("service_uuids") {
-                        record?.serviceUuids?.forEach { add(it.uuid.toString()) }
+                        record?.serviceUuids?.forEach { add(kotlinx.serialization.json.JsonPrimitive(it.uuid.toString())) }
                     }
                     put("manufacturer_data", buildJsonObject {
                         record?.manufacturerSpecificData?.let { sparse ->
                             for (i in 0 until sparse.size()) {
                                 val key = sparse.keyAt(i)
                                 val value = sparse.valueAt(i)
-                                put(key.toString(), Base64.encodeToString(value, Base64.NO_WRAP))
+                                put(key.toString(), kotlinx.serialization.json.JsonPrimitive(Base64.encodeToString(value, Base64.NO_WRAP)))
                             }
                         }
                     })
                     put("service_data", buildJsonObject {
                         record?.serviceData?.forEach { (uuid, bytes) ->
-                            put(uuid.uuid.toString(), Base64.encodeToString(bytes, Base64.NO_WRAP))
+                            put(uuid.uuid.toString(), kotlinx.serialization.json.JsonPrimitive(Base64.encodeToString(bytes, Base64.NO_WRAP)))
                         }
                     })
                     put("tx_power", record?.txPowerLevel ?: -1)
