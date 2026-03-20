@@ -473,6 +473,15 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             "wake" -> {
                 config.eventBroadcaster.notifyEvent(Event("wakeWordTrigger", "", ""))
             }
+
+            "launch-app" -> {
+                if (event.getProp("payload") != "") {
+                    val values = JSONObject(event.getProp("payload"))
+                    val packageName = values.getString("package_name")
+                    config.eventBroadcaster.notifyEvent(Event("launchApp", "", packageName))
+                }
+            }
+
             "alarm" -> {
                 if (event.getProp("payload") != "") {
                     val values = JSONObject(event.getProp("payload"))
@@ -749,7 +758,7 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
         if (appInstallReceiver != null) return
         appInstallReceiver = AppInstallReceiver {
             log.d("App list changed, resending capabilities")
-            server.deviceInfo = server.deviceCapabilitiesManager.getDeviceInfo()
+            server.deviceInfo = DeviceCapabilitiesManager(context).getDeviceInfo()
             sendCapabilities()
         }
         val filter = IntentFilter().apply {

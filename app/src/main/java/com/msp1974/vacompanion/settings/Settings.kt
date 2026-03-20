@@ -270,6 +270,13 @@ class APPConfig(val context: Context) {
         get() = this.sharedPrefs.getBoolean("always_ignore_ssl_errors", false)
         set(value) = this.sharedPrefs.edit { putBoolean("always_ignore_ssl_errors", value) }
 
+    var iconServerEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("icon_server_enabled", false)
+        set(value) {
+            this.sharedPrefs.edit { putBoolean("icon_server_enabled", value) }
+            eventBroadcaster.notifyEvent(Event("iconServerEnabled", !value, value))
+        }
+
     fun processSettings(settingString: String) {
         initSettings = true
         val settings = JSONObject(settingString)
@@ -384,6 +391,9 @@ class APPConfig(val context: Context) {
         if (settings.has("screen_orientation_mode")) {
             screenOrientationMode = settings.getString("screen_orientation_mode")
         }
+        if (settings.has("icon_server_enabled")) {
+            iconServerEnabled = settings.getBoolean("icon_server_enabled")
+        }
 
 
         Firebase.crashlytics.log("Settings update")
@@ -438,6 +448,8 @@ class APPConfig(val context: Context) {
         const val DEFAULT_DUCKING_VOLUME = 2
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0
+        const val ICON_SERVER_ENABLED = "icon_server_enabled"
+        const val ICON_SERVER_PORT = 8080
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
 
         @Volatile

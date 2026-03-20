@@ -234,6 +234,9 @@ class DeviceCapabilitiesManager(val context: Context) {
                             })
                         }
                     }
+                    if (APPConfig.getInstance(context).iconServerEnabled) {
+                        put("icon_server_port", 8080)
+                    }
                 }
             }
         }

@@ -559,6 +559,14 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 "deviceBump" -> if (config.screenOnBump) screenWake()
                 "proximity" -> if (config.screenOnProximity && event.newValue as Float == 0f) screenWake()
                 "motion" -> onMotion()
+                "launchApp" -> {
+                    val packageName = event.newValue as String
+                    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(launchIntent)
+                    }
+                }
                 "showToastMessage" -> Toast.makeText(
                     this,
                     event.newValue as String,

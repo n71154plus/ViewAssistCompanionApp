@@ -23,6 +23,7 @@ import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers
 import com.msp1974.vacompanion.utils.VolumeObserver
+import com.msp1974.vacompanion.utils.IconHttpServer
 import com.msp1974.vacompanion.wakeword.WakeWordEngine
 import com.msp1974.vacompanion.wakeword.WakeWordEngineModel
 import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
@@ -71,6 +72,8 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private lateinit var volumeObserver: VolumeObserver
 
     private var motionTask = CameraBackgroundTask(context)
+
+    private lateinit var iconHttpServer: IconHttpServer
 
     fun start() {
         assetManager = context.assets
@@ -138,6 +141,11 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
         })
         thread(name="WyomingServer") { server.start() }
+        
+        iconHttpServer = IconHttpServer(context, APPConfig.getInstance(context).iconServerPort)
+        if (config.iconServerEnabled) {
+            iconHttpServer.start()
+        }
 
         // Add config change listeners
         config.eventBroadcaster.addListener(this)
@@ -280,6 +288,13 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             "motionDetectionSensitivity" -> {
                 motionTask.setSensitivity(event.newValue as Int)
+            }
+            "iconServerEnabled" -> {
+                if (event.newValue as Boolean) {
+                    iconHttpServer.start()
+                } else {
+                    iconHttpServer.stop()
+                }
             }
             else -> consumed = false
         }
@@ -505,6 +520,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         terminateWakeWordDetection()
         stopSensors()
         server.stop()
+        iconHttpServer.stop()
 
     }
 }
