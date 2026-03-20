@@ -27,11 +27,11 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import timber.log.Timber
 
+
 data class InstalledAppInfo(
     val packageName: String,
-    val label: String
+    val label: String,
 )
-
 
 data class DeviceCapabilitiesData(
     val deviceSignature: String,
@@ -45,7 +45,7 @@ data class DeviceCapabilitiesData(
     val proximitySensorType: String,
     val sensors: List<JsonObject>,
     val audioInfo: JsonObject,
-    val installedApps: List<InstalledAppInfo>
+    val installedApps: List<InstalledAppInfo>,
 )
 
 
@@ -53,7 +53,6 @@ class DeviceCapabilitiesManager(val context: Context) {
 
     val log = Logger()
     val config = APPConfig.getInstance(context)
-
 
     fun getDeviceInfo(): DeviceCapabilitiesData {
         return DeviceCapabilitiesData(
@@ -68,33 +67,23 @@ class DeviceCapabilitiesManager(val context: Context) {
             proximitySensorType = getProximitySensorType(),
             sensors = getAvailableSensors(),
             audioInfo = getAudioInfo(),
-            installedApps = getInstalledApps()
+            installedApps = getInstalledApps(),
         )
     }
 
     fun getProximitySensorType(): String {
-        // Some devices have raw proximity sensors that report raw ADC values 
-        // (IR reflection intensity) instead of standard distance or binary values.
-        // E.g. Rockchip PX30_EVB reports ~50 (ambient) to >4000 (close).
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         val proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
-        
-        if (proximitySensor == null) {
-            return "none"
-        }
-
+        if (proximitySensor == null) return "none"
         val isPx30Evb = android.os.Build.DEVICE.equals("px30_evb", ignoreCase = true) ||
                         android.os.Build.MODEL.equals("px30_evb", ignoreCase = true)
-
         return if (isPx30Evb) "raw" else "standard"
     }
 
     fun getAvailableSensors(): List<JsonObject> {
-        // Get list of available sensor types
         val sensors: MutableList<JsonObject> = mutableListOf()
         val sensorManager: SensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         val deviceSensors = sensorManager.getSensorList(Sensor.TYPE_ALL)
-
         deviceSensors.forEach { sensor: Sensor ->
             val s = buildJsonObject {
                 put("id", sensor.id)
@@ -111,17 +100,13 @@ class DeviceCapabilitiesManager(val context: Context) {
     }
 
     fun getWebViewVersion(): String {
-        try {
+        return try {
             val info = WebView.getCurrentWebViewPackage()
-            return info!!.versionName!!
-        } catch (e: Exception) {
-            return "unknown"
-        }
+            info!!.versionName!!
+        } catch (e: Exception) { "unknown" }
     }
 
     fun hasBattery(): Boolean {
-        // Some devices report having a battery when they do not, therefore check voltage too
-        // present = false or voltage = 0
         val intentFilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         val batteryStatus = context.registerReceiver(null, intentFilter)
         val hasBattery = batteryStatus?.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)
@@ -131,14 +116,12 @@ class DeviceCapabilitiesManager(val context: Context) {
 
     fun hasLightSensor(): Boolean {
         val sensorManager: SensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val deviceSensors = sensorManager.getSensorList(Sensor.TYPE_LIGHT)
-        return deviceSensors.isNotEmpty()
+        return sensorManager.getSensorList(Sensor.TYPE_LIGHT).isNotEmpty()
     }
 
     fun hasSensorType(sensorType: Int): Boolean {
         val sensorManager: SensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val deviceSensors = sensorManager.getSensorList(sensorType)
-        return deviceSensors.isNotEmpty()
+        return sensorManager.getSensorList(sensorType).isNotEmpty()
     }
 
     fun hasFrontCamera(): Boolean {
@@ -147,41 +130,24 @@ class DeviceCapabilitiesManager(val context: Context) {
             for (cameraId in cameraManager.cameraIdList) {
                 val characteristics = cameraManager.getCameraCharacteristics(cameraId)
                 val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    return true
-                }
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) return true
             }
-        } catch (e: CameraAccessException) {
-            // A CameraAccessException here might indicate permissions or
-            // other device-specific issues preventing camera access.
-            // Do not crash the app, but handle gracefully.
-            return false
-        } catch (e: IllegalArgumentException) {
-            // This is crucial. Catches issues like "Illegal argument to HAL module"
-            // if the cameraId or characteristics query is somehow malformed on a specific device.
-            Firebase.crashlytics.recordException(e)
-            return false
-        } catch (e: Exception) {
-            // Catch other unexpected exceptions
-            return false
-        }
+        } catch (e: CameraAccessException) { return false
+        } catch (e: IllegalArgumentException) { Firebase.crashlytics.recordException(e); return false
+        } catch (e: Exception) { return false }
         return false
     }
 
     fun hasDND(): Boolean {
-        val notificationManager =  context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val notificationManager = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         return notificationManager.isNotificationPolicyAccessGranted
     }
 
     fun getAudioInfo(): JsonObject {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
         return buildJsonObject {
             put("maxMusicVolume", audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
-            put(
-                "maxNotificationVolume",
-                audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
-            )
+            put("maxNotificationVolume", audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION))
         }
     }
 
@@ -193,21 +159,20 @@ class DeviceCapabilitiesManager(val context: Context) {
         return pm.queryIntentActivities(launcherIntent, PackageManager.GET_META_DATA)
             .mapNotNull { resolveInfo ->
                 try {
-                    val packageName = resolveInfo.activityInfo.packageName
-                    val label = resolveInfo.loadLabel(pm).toString()
-                    InstalledAppInfo(packageName = packageName, label = label)
-                } catch (e: Exception) {
-                    null
-                }
+                    InstalledAppInfo(
+                        packageName = resolveInfo.activityInfo.packageName,
+                        label = resolveInfo.loadLabel(pm).toString()
+                    )
+                } catch (e: Exception) { null }
             }
             .distinctBy { it.packageName }
             .sortedBy { it.label.lowercase() }
     }
 
-
     companion object {
         @OptIn(ExperimentalSerializationApi::class)
-        fun toJson(data: DeviceCapabilitiesData): JsonObject {
+        fun toJson(data: DeviceCapabilitiesData, context: Context): JsonObject {
+            val config = APPConfig.getInstance(context)
             return buildJsonObject {
                 putJsonObject("capabilities") {
                     put("device_signature", data.deviceSignature)
@@ -234,21 +199,48 @@ class DeviceCapabilitiesManager(val context: Context) {
                             })
                         }
                     }
-                    if (APPConfig.getInstance(context).iconServerEnabled) {
-                        put("icon_server_port", 8080)
+                    if (config.httpServerEnabled && config.iconServerEnabled) {
+                        put("icon_server_port", APPConfig.HTTP_SERVER_PORT)
+                    }
+                }
+            }
+        }
+
+        // Keep backward-compatible overload used by ClientHandler
+        fun toJson(data: DeviceCapabilitiesData): JsonObject = buildJsonObject {
+            putJsonObject("capabilities") {
+                put("device_signature", data.deviceSignature)
+                put("app_version", data.appVersion)
+                put("sdk_version", data.sdkVersion)
+                put("webview_version", data.webViewVersion)
+                put("release", data.release)
+                put("has_battery", data.hasBattery)
+                put("has_front_camera", data.hasFrontCamera)
+                put("has_dnd", data.hasDND)
+                put("proximity_sensor_type", data.proximitySensorType)
+                putJsonObject("audio") {
+                    put("max_music_volume", data.audioInfo.getValue("maxMusicVolume"))
+                    put("max_notification_volume", data.audioInfo.getValue("maxNotificationVolume"))
+                }
+                putJsonArray("sensors") { addAll(data.sensors) }
+                putJsonArray("installed_apps") {
+                    data.installedApps.forEach { app ->
+                        add(buildJsonObject {
+                            put("package_name", app.packageName)
+                            put("label", app.label)
+                        })
                     }
                 }
             }
         }
 
         fun isDoNotDisturbEnabled(context: Context): Boolean {
-            val notificationManager =
-                context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            if (notificationManager.isNotificationPolicyAccessGranted) {
-                return notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+            val notificationManager = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            return if (notificationManager.isNotificationPolicyAccessGranted) {
+                notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
             } else {
                 Timber.w("Unable to check do not disturb, notification policy access not granted")
-                return false
+                false
             }
         }
     }

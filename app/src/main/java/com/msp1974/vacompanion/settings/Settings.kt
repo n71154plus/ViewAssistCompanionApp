@@ -270,11 +270,33 @@ class APPConfig(val context: Context) {
         get() = this.sharedPrefs.getBoolean("always_ignore_ssl_errors", false)
         set(value) = this.sharedPrefs.edit { putBoolean("always_ignore_ssl_errors", value) }
 
+    
+    var httpServerEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("http_server_enabled", false)
+        set(value) {
+            this.sharedPrefs.edit { putBoolean("http_server_enabled", value) }
+            eventBroadcaster.notifyEvent(Event("httpServerEnabled", !value, value))
+        }
+
     var iconServerEnabled: Boolean
         get() = this.sharedPrefs.getBoolean("icon_server_enabled", false)
         set(value) {
             this.sharedPrefs.edit { putBoolean("icon_server_enabled", value) }
             eventBroadcaster.notifyEvent(Event("iconServerEnabled", !value, value))
+        }
+
+    var mjpegStreamEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("mjpeg_stream_enabled", false)
+        set(value) {
+            this.sharedPrefs.edit { putBoolean("mjpeg_stream_enabled", value) }
+            eventBroadcaster.notifyEvent(Event("mjpegStreamEnabled", !value, value))
+        }
+
+    var bleProxyEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("ble_proxy_enabled", false)
+        set(value) {
+            this.sharedPrefs.edit { putBoolean("ble_proxy_enabled", value) }
+            eventBroadcaster.notifyEvent(Event("bleProxyEnabled", !value, value))
         }
 
     fun processSettings(settingString: String) {
@@ -391,10 +413,20 @@ class APPConfig(val context: Context) {
         if (settings.has("screen_orientation_mode")) {
             screenOrientationMode = settings.getString("screen_orientation_mode")
         }
+
+
+                if (settings.has("http_server_enabled")) {
+            httpServerEnabled = settings.getBoolean("http_server_enabled")
+        }
         if (settings.has("icon_server_enabled")) {
             iconServerEnabled = settings.getBoolean("icon_server_enabled")
         }
-
+        if (settings.has("mjpeg_stream_enabled")) {
+            mjpegStreamEnabled = settings.getBoolean("mjpeg_stream_enabled")
+        }
+        if (settings.has("ble_proxy_enabled")) {
+            bleProxyEnabled = settings.getBoolean("ble_proxy_enabled")
+        }
 
         Firebase.crashlytics.log("Settings update")
     }
@@ -435,6 +467,7 @@ class APPConfig(val context: Context) {
     companion object {
         const val NAME = "VACA"
         const val SERVER_PORT = 10800
+        const val HTTP_SERVER_PORT = 8080
         const val DEFAULT_HA_HTTP_PORT = 8123
         const val DEFAULT_RAW_PROXIMITY_THRESHOLD = 300
         const val DEFAULT_WAKE_WORD = "hey_jarvis"
@@ -448,8 +481,6 @@ class APPConfig(val context: Context) {
         const val DEFAULT_DUCKING_VOLUME = 2
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0
-        const val ICON_SERVER_ENABLED = "icon_server_enabled"
-        const val ICON_SERVER_PORT = 8080
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
 
         @Volatile

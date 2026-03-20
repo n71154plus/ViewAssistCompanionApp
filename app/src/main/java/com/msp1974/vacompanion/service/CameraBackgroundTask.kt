@@ -32,6 +32,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import kotlin.math.absoluteValue
 import kotlin.math.max
 import kotlin.math.min
@@ -59,6 +65,9 @@ class CameraBackgroundTask(val context: Context) {
     private var lastDetection: Long = 0
 
     private var isRunning: Boolean = false
+
+    // MJPEG frame provider - latest JPEG frame for HTTP server
+    var latestJpegFrame: ByteArray? = null
 
 
     init {
@@ -144,6 +153,31 @@ class CameraBackgroundTask(val context: Context) {
                         }
                     }
                 }
+            }
+        }
+        // Generate MJPEG frame if stream is enabled
+        if (image != null && config.mjpegStreamEnabled) {
+            try {
+                val buffer = image.planes[0].buffer
+                buffer.rewind()
+                val yData = ByteArray(buffer.remaining())
+                buffer.get(yData)
+
+                val uvBuffer = image.planes[2].buffer
+                uvBuffer.rewind()
+                val uvData = ByteArray(uvBuffer.remaining())
+                uvBuffer.get(uvData)
+
+                val nv21 = ByteArray(yData.size + uvData.size)
+                System.arraycopy(yData, 0, nv21, 0, yData.size)
+                System.arraycopy(uvData, 0, nv21, yData.size, uvData.size)
+
+                val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+                val out = ByteArrayOutputStream()
+                yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 70, out)
+                latestJpegFrame = out.toByteArray()
+            } catch (e: Exception) {
+                Timber.e("MJPEG frame error: $e")
             }
         }
         image?.close()

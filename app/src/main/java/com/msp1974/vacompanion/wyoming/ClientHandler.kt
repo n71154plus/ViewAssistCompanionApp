@@ -4,13 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import com.msp1974.vacompanion.broadcasts.AppInstallReceiver
 import android.os.Handler
 import android.os.Looper
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.msp1974.vacompanion.audio.Alarm
 import com.msp1974.vacompanion.audio.PCMMediaPlayer
 import com.msp1974.vacompanion.audio.VAMediaPlayer
+import com.msp1974.vacompanion.broadcasts.AppInstallReceiver
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesManager
@@ -67,9 +67,9 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
     private var musicPlayer: VAMediaPlayer = VAMediaPlayer.getInstance(context)
 
     private var expectingTTSResponse: Boolean = false
+    private var appInstallReceiver: AppInstallReceiver? = null
     private var lastResponseIsQuestion: Boolean = false
 
-    private var appInstallReceiver: AppInstallReceiver? = null
     // Initiate wake word broadcast receiver
     var wakeWordBroadcastReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -132,11 +132,11 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
     fun stop() {
         log.d("Stopping client $client_id connection handler")
         stopIntervalPing()
-        unregisterAppInstallReceiver()
 
         if (satelliteStatus == SatelliteState.RUNNING) {
             stopSatellite()
         }
+        unregisterAppInstallReceiver()
         client.close()
 
         if (config.atomicConnectionCount.get() > 0) {
@@ -473,7 +473,6 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             "wake" -> {
                 config.eventBroadcaster.notifyEvent(Event("wakeWordTrigger", "", ""))
             }
-
             "launch-app" -> {
                 if (event.getProp("payload") != "") {
                     val values = JSONObject(event.getProp("payload"))
@@ -481,7 +480,6 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                     config.eventBroadcaster.notifyEvent(Event("launchApp", "", packageName))
                 }
             }
-
             "alarm" -> {
                 if (event.getProp("payload") != "") {
                     val values = JSONObject(event.getProp("payload"))
@@ -745,15 +743,6 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
         )
     }
 
-    fun sendCapabilities() {
-        val data = DeviceCapabilitiesManager.toJson(server.deviceInfo).toMap()
-        sendCustomEvent("capabilities", buildJsonObject {
-            for (key in data.keys) {
-                put(key, data[key] as JsonElement)
-            }
-        })
-    }
-
     fun registerAppInstallReceiver() {
         if (appInstallReceiver != null) return
         appInstallReceiver = AppInstallReceiver {
@@ -767,18 +756,27 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             addAction(Intent.ACTION_PACKAGE_REPLACED)
             addDataScheme("package")
         }
-        server.context.registerReceiver(appInstallReceiver, filter)
+        context.registerReceiver(appInstallReceiver, filter)
     }
 
     fun unregisterAppInstallReceiver() {
         appInstallReceiver?.let {
-            try {
-                server.context.unregisterReceiver(it)
-            } catch (e: Exception) {
-                log.w("Failed to unregister app install receiver: $e")
-            }
+            try { context.unregisterReceiver(it) } catch (e: Exception) { log.w("Failed to unregister app install receiver: $e") }
             appInstallReceiver = null
         }
+    }
+
+    fun sendBleAdvertisement(data: kotlinx.serialization.json.JsonObject) {
+        sendCustomEvent("ble_advertisement", data)
+    }
+
+    fun sendCapabilities() {
+        val data = DeviceCapabilitiesManager.toJson(server.deviceInfo).toMap()
+        sendCustomEvent("capabilities", buildJsonObject {
+            for (key in data.keys) {
+                put(key, data[key] as JsonElement)
+            }
+        })
     }
 
     fun sendCustomEvent(type: String, data: JsonObject) {

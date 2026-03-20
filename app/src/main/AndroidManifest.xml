@@ -40,6 +40,10 @@
         tools:ignore="ProtectedPermissions" />
 
     <!--Restart Service After Reboot the Mobile Device-->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!--Write permissions for auto updating-->

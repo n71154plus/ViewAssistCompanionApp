@@ -12,18 +12,20 @@ import com.msp1974.vacompanion.R
 import com.msp1974.vacompanion.wyoming.Zeroconf
 import com.msp1974.vacompanion.audio.SoundClipPlayer
 import com.msp1974.vacompanion.audio.AudioManager as AudManager
+import com.msp1974.vacompanion.broadcasts.AppInstallReceiver
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
 import com.msp1974.vacompanion.sensors.SensorUpdatesCallback
 import com.msp1974.vacompanion.sensors.Sensors
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.ui.DiagnosticInfo
+import com.msp1974.vacompanion.sensors.BleScanner
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesManager
+import com.msp1974.vacompanion.utils.VacaHttpServer
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers
 import com.msp1974.vacompanion.utils.VolumeObserver
-import com.msp1974.vacompanion.utils.IconHttpServer
 import com.msp1974.vacompanion.wakeword.WakeWordEngine
 import com.msp1974.vacompanion.wakeword.WakeWordEngineModel
 import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
@@ -35,6 +37,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -69,11 +72,12 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private var sensorRunner: Sensors? = null
     lateinit var assetManager: AssetManager
     lateinit var server: WyomingTCPServer
+    private var httpServer: VacaHttpServer? = null
+    private var bleScanner: BleScanner? = null
+    private var appInstallReceiver: AppInstallReceiver? = null
     private lateinit var volumeObserver: VolumeObserver
 
     private var motionTask = CameraBackgroundTask(context)
-
-    private lateinit var iconHttpServer: IconHttpServer
 
     fun start() {
         assetManager = context.assets
@@ -141,11 +145,35 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
         })
         thread(name="WyomingServer") { server.start() }
-        
-        iconHttpServer = IconHttpServer(context, APPConfig.getInstance(context).iconServerPort)
-        if (config.iconServerEnabled) {
-            iconHttpServer.start()
+
+        // Start HTTP server if enabled
+        if (config.httpServerEnabled) {
+            httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
+            httpServer?.mjpegFrameProvider = { motionTask.latestJpegFrame }
+            httpServer?.start()
         }
+
+        // Start BLE scanner if enabled
+        if (config.bleProxyEnabled) {
+            bleScanner = BleScanner(context)
+            bleScanner?.onAdvertisement = { data ->
+                server.pipelineClient?.sendBleAdvertisement(data)
+            }
+            bleScanner?.start()
+        }
+
+        // Register app install receiver
+        appInstallReceiver = AppInstallReceiver {
+            server.deviceInfo = DeviceCapabilitiesManager(context).getDeviceInfo()
+            server.pipelineClient?.sendCapabilities()
+        }
+        val appFilter = android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_PACKAGE_ADDED)
+            addAction(android.content.Intent.ACTION_PACKAGE_REMOVED)
+            addAction(android.content.Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        context.registerReceiver(appInstallReceiver, appFilter)
 
         // Add config change listeners
         config.eventBroadcaster.addListener(this)
@@ -223,6 +251,27 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             "screenSaver" -> {
                 server.sendSetting("screen_saver", event.newValue)
+                "httpServerEnabled" -> {
+                    if (event.newValue as Boolean) {
+                        httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
+                        httpServer?.start()
+                    } else {
+                        httpServer?.stop()
+                        httpServer = null
+                    }
+                }
+                "iconServerEnabled", "mjpegStreamEnabled" -> { /* handled by VacaHttpServer internally */ }
+                "bleProxyEnabled" -> {
+                    if (event.newValue as Boolean) {
+                        bleScanner = bleScanner ?: BleScanner(context)
+                        bleScanner?.onAdvertisement = { data ->
+                            server.pipelineClient?.sendBleAdvertisement(data)
+                        }
+                        bleScanner?.start()
+                    } else {
+                        bleScanner?.stop()
+                    }
+                }
             }
             "restartZeroconf" -> {
                 zeroConf.unregisterService()
@@ -288,13 +337,6 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             "motionDetectionSensitivity" -> {
                 motionTask.setSensitivity(event.newValue as Int)
-            }
-            "iconServerEnabled" -> {
-                if (event.newValue as Boolean) {
-                    iconHttpServer.start()
-                } else {
-                    iconHttpServer.stop()
-                }
             }
             else -> consumed = false
         }
@@ -520,7 +562,12 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         terminateWakeWordDetection()
         stopSensors()
         server.stop()
-        iconHttpServer.stop()
+        httpServer?.stop()
+        httpServer = null
+        bleScanner?.stop()
+        bleScanner = null
+        try { context.unregisterReceiver(appInstallReceiver) } catch (e: Exception) {}
+        appInstallReceiver = null
 
     }
 }
