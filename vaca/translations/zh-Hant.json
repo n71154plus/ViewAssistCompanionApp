@@ -1,0 +1,316 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Service is already configured",
+      "no_port": "No port for endpoint",
+      "no_services": "No services found at endpoint"
+    },
+    "error": {
+      "cannot_connect": "無法連線"
+    },
+    "step": {
+      "hassio_confirm": {
+        "description": "請輸入 VACA 裝置的連線資訊"
+      },
+      "user": {
+        "data": {
+          "host": "主機位址",
+          "port": "連接埠"
+        }
+      },
+      "zeroconf_confirm": {
+        "description": "請輸入 VACA 裝置的連線資訊",
+        "title": "設定 VACA 裝置"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "battery_charging": {
+        "name": "充電中"
+      },
+      "screen_on": {
+        "name": "螢幕開啟"
+      },
+      "motion_detected": {
+        "name": "偵測到動作"
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Refresh"
+      },
+      "screen_wake": {
+        "name": "Wake screen"
+      },
+      "screen_sleep": {
+        "name": "Sleep screen"
+      },
+      "wake": {
+        "name": "Wake"
+      }
+    },
+    "media_player": {
+      "media_player": {
+        "name": "Media Player",
+        "state": {
+          "playing": "Playing",
+          "paused": "Paused",
+          "idle": "Idle"
+        }
+      }
+    },
+    "number": {
+      "mic_gain": {
+        "name": "麥克風增益"
+      },
+      "screen_brightness": {
+        "name": "螢幕亮度"
+      },
+      "notification_volume": {
+        "name": "通知音量"
+      },
+      "motion_detection_sensitivity": {
+        "name": "動作靈敏度"
+      },
+      "music_volume": {
+        "name": "音樂音量"
+      },
+      "ducking_volume": {
+        "name": "閃避音量"
+      },
+      "wake_word_threshold": {
+        "name": "Wake Word 閾值"
+      },
+      "zoom_level": {
+        "name": "縮放等級"
+      },
+      "raw_proximity_threshold": {
+        "name": "接近感應閾值"
+      },
+      "bump_sensitivity": {
+        "name": "Bump sensitivity"
+      },
+      "recent_apps_count": {
+        "name": "最近使用 App 數量"
+      },
+      "frequent_apps_count": {
+        "name": "常用 App 數量"
+      },
+      "ble_rssi_threshold": {
+        "name": "BLE RSSI 門檻"
+      },
+      "ble_batch_interval_ms": {
+        "name": "BLE 批次間隔"
+      },
+      "mjpeg_fps": {
+        "name": "串流 FPS"
+      },
+      "mjpeg_quality": {
+        "name": "串流畫質"
+      }
+    },
+    "select": {
+      "noise_suppression_level": {
+        "name": "降噪等級",
+        "state": {
+          "high": "High",
+          "low": "Low",
+          "max": "Max",
+          "medium": "Medium",
+          "off": "Off"
+        }
+      },
+      "pipeline": {
+        "name": "語音管線",
+        "state": {
+          "preferred": "Preferred"
+        }
+      },
+      "vad_sensitivity": {
+        "name": "VAD 靈敏度",
+        "state": {
+          "aggressive": "Aggressive",
+          "default": "Default",
+          "relaxed": "Relaxed"
+        }
+      },
+      "wake_word_engine": {
+        "name": "Wake Word 引擎",
+        "state": {
+          "openwakeword": "OpenWakeWord",
+          "microwakeword": "MicroWakeWord"
+        }
+      },
+      "wake_word": {
+        "name": "Wake Word"
+      },
+      "wake_word_sound": {
+        "name": "Wake Word 提示音",
+        "state": {
+          "none": "None",
+          "havpe": "Home Assistant",
+          "alexa": "Alexa",
+          "bubble": "Bubble",
+          "ding": "Ding"
+        }
+      },
+      "screen_timeout": {
+        "name": "螢幕逾時",
+        "state": {
+          "15": "15 seconds",
+          "30": "30 seconds",
+          "60": "1 minute",
+          "120": "2 minutes",
+          "300": "5 minutes",
+          "600": "10 minutes",
+          "1800": "30 minutes"
+        }
+      },
+      "screen_orientation_mode": {
+        "name": "螢幕方向",
+        "state": {
+          "auto": "Auto",
+          "portrait": "Portrait",
+          "landscape": "Landscape",
+          "reverse_portrait": "Reverse Portrait",
+          "reverse_landscape": "Reverse Landscape"
+        }
+      },
+      "ble_scan_mode": {
+        "name": "BLE 掃描模式",
+        "state": {
+          "0": "低功耗",
+          "1": "平衡",
+          "2": "低延遲"
+        }
+      }
+    },
+    "sensor": {
+      "stt": {
+        "name": "語音辨識"
+      },
+      "tts": {
+        "name": "語音合成"
+      },
+      "intent": {
+        "name": "意圖"
+      },
+      "light_level": {
+        "name": "Light level"
+      },
+      "orientation": {
+        "name": "螢幕方向",
+        "state": {
+          "unknown": "Unknown",
+          "portrait": "Portrait",
+          "landscape": "Landscape"
+        }
+      },
+      "battery_level": {
+        "name": "電池電量"
+      },
+      "app_version": {
+        "name": "App 版本"
+      },
+      "current_path": {
+        "name": "Current path"
+      },
+      "last_motion": {
+        "name": "最後動作時間"
+      },
+      "installed_apps": {
+        "name": "已安裝應用程式"
+      },
+      "http_server_url": {
+        "name": "HTTP server URL"
+      },
+      "web_server": {
+        "name": "網頁伺服器"
+      },
+      "recent_apps": {
+        "name": "最近使用 App"
+      },
+      "frequent_apps": {
+        "name": "常用 App"
+      }
+    },
+    "switch": {
+      "mute": {
+        "name": "靜音"
+      },
+      "screen_on": {
+        "name": "Screen"
+      },
+      "swipe_refresh": {
+        "name": "Swipe to refresh"
+      },
+      "screen_auto_brightness": {
+        "name": "自動亮度"
+      },
+      "screen_always_on": {
+        "name": "螢幕常亮"
+      },
+      "do_not_disturb": {
+        "name": "勿擾模式"
+      },
+      "dark_mode": {
+        "name": "暗色模式"
+      },
+      "diagnostics_enabled": {
+        "name": "On screen diagnostics"
+      },
+      "continue_conversation": {
+        "name": "繼續對話"
+      },
+      "alarm": {
+        "name": "鬧鈴"
+      },
+      "enable_motion_detection": {
+        "name": "動作偵測"
+      },
+      "screen_on_wake_word": {
+        "name": "偵測到 Wake Word 時喚醒"
+      },
+      "screen_on_bump": {
+        "name": "撞擊喚醒"
+      },
+      "screen_on_proximity": {
+        "name": "接近感應喚醒"
+      },
+      "screen_on_motion": {
+        "name": "動作喚醒"
+      },
+      "screen_saver": {
+        "name": "螢幕保護"
+      },
+      "http_server": {
+        "name": "HTTP 伺服器"
+      },
+      "icon_server": {
+        "name": "Icon 伺服器"
+      },
+      "mjpeg_stream": {
+        "name": "MJPEG 串流"
+      },
+      "ble_proxy": {
+        "name": "藍牙代理"
+      },
+      "recent_apps_enabled": {
+        "name": "啟用 App 使用追蹤"
+      },
+      "http_server_enabled": {
+        "name": "HTTP 伺服器"
+      },
+      "icon_server_enabled": {
+        "name": "Icon 伺服器"
+      },
+      "mjpeg_stream_enabled": {
+        "name": "MJPEG 串流"
+      },
+      "ble_proxy_enabled": {
+        "name": "藍牙代理"
+      }
+    }
+  }
+}

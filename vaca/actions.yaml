@@ -1,0 +1,20 @@
+launch_app:
+  name: Launch app
+  description: Launch an app on the VACA Android device by package name.
+  fields:
+    package_name:
+      name: Package name
+      description: The Android package name of the app to launch (e.g. com.spotify.music).
+      required: true
+      example: "com.spotify.music"
+      selector:
+        text:
+          type: text
+    entry_id:
+      name: Entry ID
+      description: Optional config entry ID to target a specific device. If omitted, all connected devices receive the command.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
