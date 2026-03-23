@@ -218,27 +218,25 @@ async def get_device_capabilities(item: DomainDataItem):
 
     for _ in range(4):
         try:
-            async with (
-                AsyncTcpClient(item.service.host, item.service.port) as client,
-                asyncio.timeout(1),
-            ):
-                # Describe -> Info
-                await client.write_event(CustomEvent("capabilities").event())
-                while True:
-                    event = await client.read_event()
-                    if event is None:
-                        raise WyomingError(  # noqa: TRY301
-                            "Connection closed unexpectedly",
-                        )
+            async with asyncio.timeout(1):
+                async with AsyncTcpClient(item.service.host, item.service.port) as client:
+                    # Describe -> Info
+                    await client.write_event(CustomEvent("capabilities").event())
+                    while True:
+                        event = await client.read_event()
+                        if event is None:
+                            raise WyomingError(  # noqa: TRY301
+                                "Connection closed unexpectedly",
+                            )
 
-                    if CustomEvent.is_type(event.type) and (
-                        event_data := CustomEvent.from_event(event).event_data
-                    ):
-                        capabilities = event_data.get("capabilities")
-                        break  # while
+                        if CustomEvent.is_type(event.type) and (
+                            event_data := CustomEvent.from_event(event).event_data
+                        ):
+                            capabilities = event_data.get("capabilities")
+                            break  # while
 
-                if capabilities is not None:
-                    break  # for
+            if capabilities is not None:
+                break  # for
         except (TimeoutError, OSError, WyomingError) as ex:
             _LOGGER.warning(
                 "Error getting device capabilities: %s, %s", ex, capabilities
