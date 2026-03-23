@@ -1,0 +1,195 @@
+ble_connect:
+  name: BLE Connect
+  description: Connect to a BLE device via the Android GATT proxy.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Config entry ID of the target VACA device. If omitted, the first available device is used.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
+    address:
+      name: Device address
+      description: MAC address of the BLE device to connect to.
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+          type: text
+
+ble_disconnect:
+  name: BLE Disconnect
+  description: Disconnect from a BLE device.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Config entry ID of the target VACA device.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
+    address:
+      name: Device address
+      description: MAC address of the BLE device to disconnect.
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+          type: text
+
+ble_read:
+  name: BLE Read Characteristic
+  description: Read a GATT characteristic from a connected BLE device. Result is fired as a vaca_ble_read_result HA event.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Config entry ID of the target VACA device.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
+    address:
+      name: Device address
+      description: MAC address of the connected BLE device.
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+          type: text
+    service:
+      name: Service UUID
+      description: GATT service UUID.
+      required: true
+      example: "0000180a-0000-1000-8000-00805f9b34fb"
+      selector:
+        text:
+          type: text
+    characteristic:
+      name: Characteristic UUID
+      description: GATT characteristic UUID.
+      required: true
+      example: "00002a29-0000-1000-8000-00805f9b34fb"
+      selector:
+        text:
+          type: text
+
+ble_write:
+  name: BLE Write Characteristic
+  description: Write a value to a GATT characteristic on a connected BLE device.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Config entry ID of the target VACA device.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
+    address:
+      name: Device address
+      description: MAC address of the connected BLE device.
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+          type: text
+    service:
+      name: Service UUID
+      description: GATT service UUID.
+      required: true
+      example: "0000180a-0000-1000-8000-00805f9b34fb"
+      selector:
+        text:
+          type: text
+    characteristic:
+      name: Characteristic UUID
+      description: GATT characteristic UUID.
+      required: true
+      example: "00002a29-0000-1000-8000-00805f9b34fb"
+      selector:
+        text:
+          type: text
+    value:
+      name: Value (Base64)
+      description: The bytes to write, encoded as a Base64 string.
+      required: true
+      example: "AQ=="
+      selector:
+        text:
+          type: text
+    response:
+      name: With response
+      description: Whether to use Write With Response (true) or Write Without Response (false).
+      required: false
+      default: true
+      selector:
+        boolean:
+
+ble_subscribe:
+  name: BLE Subscribe Notification
+  description: Subscribe or unsubscribe from GATT characteristic notifications. Notifications arrive as vaca_ble_notify HA events.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Config entry ID of the target VACA device.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
+    address:
+      name: Device address
+      description: MAC address of the connected BLE device.
+      required: true
+      example: "AA:BB:CC:DD:EE:FF"
+      selector:
+        text:
+          type: text
+    service:
+      name: Service UUID
+      description: GATT service UUID.
+      required: true
+      example: "0000180a-0000-1000-8000-00805f9b34fb"
+      selector:
+        text:
+          type: text
+    characteristic:
+      name: Characteristic UUID
+      description: GATT characteristic UUID.
+      required: true
+      example: "00002a29-0000-1000-8000-00805f9b34fb"
+      selector:
+        text:
+          type: text
+    enable:
+      name: Enable
+      description: Set to true to subscribe, false to unsubscribe.
+      required: false
+      default: true
+      selector:
+        boolean:
+
+launch_app:
+  name: Launch app
+  description: Launch an app on the VACA Android device by package name.
+  fields:
+    package_name:
+      name: Package name
+      description: The Android package name of the app to launch (e.g. com.spotify.music).
+      required: true
+      example: "com.spotify.music"
+      selector:
+        text:
+          type: text
+    entry_id:
+      name: Entry ID
+      description: Optional config entry ID to target a specific device. If omitted, all connected devices receive the command.
+      required: false
+      example: "7a740cd21"
+      selector:
+        text:
+          type: text
