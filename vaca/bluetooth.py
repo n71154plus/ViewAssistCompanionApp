@@ -603,7 +603,6 @@ async def async_connect_ble_scanner(
         scanner,
         source_domain=DOMAIN,
         source_config_entry_id=entry.entry_id,
-        connectable=True,
     )
 
     @callback
