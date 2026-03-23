@@ -98,6 +98,11 @@ def _build_service_collection(services_data: list[dict]) -> BleakGATTServiceColl
 class VacaBLEScanner(BaseHaRemoteScanner):
     """BLE scanner that receives advertisements from the Android device via Wyoming."""
 
+    @property
+    def scanning(self) -> bool:
+        """Always report as scanning — VACA is continuously scanning on the Android side."""
+        return True
+
     @callback
     def inject_advertisement(self, adv_data: dict) -> None:
         """Inject a BLE advertisement received from Android."""
@@ -579,7 +584,8 @@ async def async_connect_ble_scanner(
     connector = HaBluetoothConnector(
         client=VacaBleakClient.make_for_proxy(gatt_proxy),
         source=source,
-        can_connect=lambda: True,
+        # Only report connectable when the satellite TCP link is up (send_callback set)
+        can_connect=lambda: gatt_proxy._send_callback is not None,
     )
 
     scanner = VacaBLEScanner(
