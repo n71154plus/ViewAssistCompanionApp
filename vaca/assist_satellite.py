@@ -128,6 +128,17 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
             self.entity_id.replace("assist_satellite.", ""),
             _RECONNECT_SECONDS,
         )
+        # Clear BLE proxy send callback so can_connect() returns False while disconnected
+        gatt_proxy = self.hass.data.get(f"{DOMAIN}_gatt", {}).get(self.config_entry.entry_id)
+        if gatt_proxy is not None:
+            gatt_proxy.set_send_callback(None)
+        # Mark scanner as not scanning
+        ble_scanner = self.hass.data.get(f"{DOMAIN}_ble", {}).get(self.config_entry.entry_id)
+        if ble_scanner is not None:
+            try:
+                ble_scanner._scanning = False
+            except (AttributeError, TypeError):
+                pass
         await asyncio.sleep(_RESTART_SECONDS)
 
     async def on_reconnect(self) -> None:
@@ -259,6 +270,14 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                         f"ble gatt {event_type}",
                     )
             gatt_proxy.set_send_callback(_send_ble_event)
+
+        # Mark scanner as scanning now that the satellite link is up
+        ble_scanner = self.hass.data.get(f"{DOMAIN}_ble", {}).get(self.config_entry.entry_id)
+        if ble_scanner is not None:
+            try:
+                ble_scanner._scanning = True
+            except (AttributeError, TypeError):
+                pass
 
     def on_pipeline_event(self, event: PipelineEvent) -> None:
         """Handle pipeline events from the assist pipeline.
