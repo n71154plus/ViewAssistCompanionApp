@@ -103,6 +103,9 @@ class VAForegroundService : LifecycleService() {
                         requires += ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                         requires += ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
                     }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        requires += ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                    }
 
                     Timber.d("Running in foreground ServiceCompat mode")
                     ServiceCompat.startForeground(

@@ -12,6 +12,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import timber.log.Timber
@@ -76,6 +77,7 @@ class BleGattManager(private val context: Context) {
 
     private val connections = ConcurrentHashMap<String, DeviceConnection>()
     var callback: BleGattCallback? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -113,6 +115,7 @@ class BleGattManager(private val context: Context) {
 
         val conn = DeviceConnection(address)
         connections[address] = conn
+        acquireWakeLockIfNeeded()
 
         startTimeout(conn, "connect") {
             Timber.w("BleGatt connect($address): timeout")
@@ -277,6 +280,10 @@ class BleGattManager(private val context: Context) {
 
     fun disconnectAll() {
         connections.keys.toList().forEach { disconnect(it) }
+        // Safety release: if all connections are gone already (e.g. callback never fired)
+        if (connections.isEmpty()) {
+            releaseWakeLock()
+        }
     }
 
     fun getConnectedAddresses(): List<String> = connections.keys.toList()
@@ -498,6 +505,27 @@ class BleGattManager(private val context: Context) {
         try { conn.gatt?.close() } catch (_: Exception) {}
         conn.gatt = null
         conn.characteristicMap.clear()
+        if (connections.isEmpty()) {
+            releaseWakeLock()
+        }
+    }
+
+    private fun acquireWakeLockIfNeeded() {
+        if (wakeLock == null || wakeLock?.isHeld == false) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "vaca:BleGattWakeLock",
+            )
+            @Suppress("WakelockTimeout")
+            wakeLock?.acquire() // released when all connections are closed
+            Timber.d("BleGatt wake lock acquired")
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) { it.release(); Timber.d("BleGatt wake lock released") } }
+        wakeLock = null
     }
 
     private fun startTimeout(conn: DeviceConnection, operation: String, onTimeout: () -> Unit) {
