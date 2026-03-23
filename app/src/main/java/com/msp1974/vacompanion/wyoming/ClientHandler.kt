@@ -6,7 +6,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.msp1974.vacompanion.sensors.BleGattCallback
+import com.msp1974.vacompanion.sensors.BleGattServiceInfo
 import com.msp1974.vacompanion.audio.Alarm
 import com.msp1974.vacompanion.audio.PCMMediaPlayer
 import com.msp1974.vacompanion.audio.VAMediaPlayer
@@ -46,7 +49,7 @@ import kotlin.concurrent.atomics.minusAssign
 import kotlin.concurrent.atomics.plusAssign
 import kotlin.concurrent.thread
 
-class ClientHandler(private val context: Context, private val server: WyomingTCPServer, private val client: Socket) {
+class ClientHandler(private val context: Context, private val server: WyomingTCPServer, private val client: Socket) : BleGattCallback {
     private val log = Logger()
     private val config: APPConfig = APPConfig.getInstance(context)
     private val client_id = client.port
@@ -190,6 +193,9 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             stop()
         }
         config.isRunning = satelliteStatus == SatelliteState.RUNNING
+        if (satelliteStatus == SatelliteState.RUNNING) {
+            server.bleGattManager?.callback = this
+        }
     }
 
     private fun stopSatellite() {
@@ -207,6 +213,10 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             pipelineStatus = PipelineStatus.INACTIVE
             satelliteStatus = SatelliteState.STOPPED
             server.pipelineClient = null
+            server.bleGattManager?.let { gatt ->
+                gatt.disconnectAll()
+                gatt.callback = null
+            }
             config.homeAssistantConnectedIP = ""
             server.satelliteStopped()
         } else {
@@ -412,6 +422,11 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                 sendCapabilities()
                 registerAppInstallReceiver()
             }
+            "ble_connect"    -> handleBleConnect(event)
+            "ble_disconnect" -> handleBleDisconnect(event)
+            "ble_read"       -> handleBleRead(event)
+            "ble_write"      -> handleBleWrite(event)
+            "ble_subscribe"  -> handleBleSubscribe(event)
         }
     }
 
@@ -859,6 +874,149 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             log.e("Event read exception ${ex.toString().substring(0, ex.toString().length.coerceAtMost(50))}")
         }
         return null
+    }
+
+    // ── BLE GATT — incoming events from HA ────────────────────────────────────
+
+    private fun safeGetProp(event: WyomingPacket, prop: String, default: String = ""): String = try {
+        event.getProp(prop)
+    } catch (_: Exception) { default }
+
+    private fun handleBleConnect(event: WyomingPacket) {
+        val address = safeGetProp(event, "address")
+        if (address.isBlank()) { log.w("ble_connect: missing address"); return }
+        server.bleGattManager?.connect(address)
+            ?: log.w("ble_connect: BleGattManager not initialised")
+    }
+
+    private fun handleBleDisconnect(event: WyomingPacket) {
+        val address = safeGetProp(event, "address")
+        if (address.isBlank()) { log.w("ble_disconnect: missing address"); return }
+        server.bleGattManager?.disconnect(address)
+    }
+
+    private fun handleBleRead(event: WyomingPacket) {
+        val address        = safeGetProp(event, "address")
+        val service        = safeGetProp(event, "service")
+        val characteristic = safeGetProp(event, "characteristic")
+        if (address.isBlank() || service.isBlank() || characteristic.isBlank()) {
+            log.w("ble_read: missing required fields"); return
+        }
+        server.bleGattManager?.readCharacteristic(address, service, characteristic)
+    }
+
+    private fun handleBleWrite(event: WyomingPacket) {
+        val address        = safeGetProp(event, "address")
+        val service        = safeGetProp(event, "service")
+        val characteristic = safeGetProp(event, "characteristic")
+        val value64        = safeGetProp(event, "value")
+        val withResponse   = safeGetProp(event, "response", "true").toBoolean()
+        if (address.isBlank() || service.isBlank() || characteristic.isBlank() || value64.isBlank()) {
+            log.w("ble_write: missing required fields"); return
+        }
+        val bytes = try {
+            Base64.decode(value64, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            log.w("ble_write: invalid base64 value")
+            sendBleError(address, "write", "Invalid base64 value")
+            return
+        }
+        server.bleGattManager?.writeCharacteristic(address, service, characteristic, bytes, withResponse)
+    }
+
+    private fun handleBleSubscribe(event: WyomingPacket) {
+        val address        = safeGetProp(event, "address")
+        val service        = safeGetProp(event, "service")
+        val characteristic = safeGetProp(event, "characteristic")
+        val enable         = safeGetProp(event, "enable", "true").toBoolean()
+        if (address.isBlank() || service.isBlank() || characteristic.isBlank()) {
+            log.w("ble_subscribe: missing required fields"); return
+        }
+        server.bleGattManager?.setNotification(address, service, characteristic, enable)
+    }
+
+    // ── BleGattCallback implementation ────────────────────────────────────────
+
+    override fun onConnected(address: String, services: List<BleGattServiceInfo>) {
+        sendCustomEvent("ble_connect_result", buildJsonObject {
+            put("address", address)
+            put("success", true)
+            putJsonArray("services") {
+                services.forEach { service ->
+                    add(buildJsonObject {
+                        put("uuid", service.uuid)
+                        putJsonArray("characteristics") {
+                            service.characteristics.forEach { char ->
+                                add(buildJsonObject {
+                                    put("uuid", char.uuid)
+                                    put("properties", char.properties)
+                                })
+                            }
+                        }
+                    })
+                }
+            }
+        })
+    }
+
+    override fun onDisconnected(address: String) {
+        sendCustomEvent("ble_disconnected", buildJsonObject {
+            put("address", address)
+        })
+    }
+
+    override fun onReadResult(
+        address: String,
+        serviceUuid: String,
+        characteristicUuid: String,
+        value: ByteArray,
+    ) {
+        sendCustomEvent("ble_read_result", buildJsonObject {
+            put("address", address)
+            put("service", serviceUuid)
+            put("characteristic", characteristicUuid)
+            put("value", Base64.encodeToString(value, Base64.NO_WRAP))
+        })
+    }
+
+    override fun onWriteResult(
+        address: String,
+        serviceUuid: String,
+        characteristicUuid: String,
+        success: Boolean,
+    ) {
+        sendCustomEvent("ble_write_result", buildJsonObject {
+            put("address", address)
+            put("service", serviceUuid)
+            put("characteristic", characteristicUuid)
+            put("success", success)
+        })
+    }
+
+    override fun onNotification(
+        address: String,
+        serviceUuid: String,
+        characteristicUuid: String,
+        value: ByteArray,
+    ) {
+        sendCustomEvent("ble_notify", buildJsonObject {
+            put("address", address)
+            put("service", serviceUuid)
+            put("characteristic", characteristicUuid)
+            put("value", Base64.encodeToString(value, Base64.NO_WRAP))
+        })
+    }
+
+    override fun onError(address: String, operation: String, message: String) {
+        sendBleError(address, operation, message)
+    }
+
+    private fun sendBleError(address: String, operation: String, message: String) {
+        sendCustomEvent("ble_error", buildJsonObject {
+            put("address", address)
+            put("operation", operation)
+            put("message", message)
+        })
     }
 
     private fun writeEvent(p: WyomingPacket) {

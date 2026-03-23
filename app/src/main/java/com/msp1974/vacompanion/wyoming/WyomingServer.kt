@@ -1,6 +1,7 @@
 package com.msp1974.vacompanion.wyoming
 
 import android.content.Context
+import com.msp1974.vacompanion.sensors.BleGattManager
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesData
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesManager
 import com.msp1974.vacompanion.utils.Logger
@@ -25,6 +26,7 @@ class WyomingTCPServer (val context: Context, val port: Int, val cbCallback: Wyo
     lateinit var server: ServerSocket
 
     var deviceInfo: DeviceCapabilitiesData = DeviceCapabilitiesManager(context).getDeviceInfo()
+    var bleGattManager: BleGattManager? = null
 
     fun start() {
         try {

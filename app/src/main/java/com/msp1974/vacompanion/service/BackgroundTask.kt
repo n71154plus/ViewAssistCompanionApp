@@ -18,6 +18,7 @@ import com.msp1974.vacompanion.sensors.SensorUpdatesCallback
 import com.msp1974.vacompanion.sensors.Sensors
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.ui.DiagnosticInfo
+import com.msp1974.vacompanion.sensors.BleGattManager
 import com.msp1974.vacompanion.sensors.BleScanner
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesManager
 import com.msp1974.vacompanion.utils.VacaHttpServer
@@ -74,6 +75,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     lateinit var server: WyomingTCPServer
     private var httpServer: VacaHttpServer? = null
     private var bleScanner: BleScanner? = null
+    private var bleGattManager: BleGattManager? = null
     private var appInstallReceiver: AppInstallReceiver? = null
     private lateinit var volumeObserver: VolumeObserver
 
@@ -153,7 +155,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             httpServer?.start()
         }
 
-        // Start BLE scanner if enabled
+        // Start BLE proxy (scanner + GATT manager) if enabled
         Timber.d("BackgroundTask start(): bleProxyEnabled=${config.bleProxyEnabled}")
         if (config.bleProxyEnabled) {
             bleScanner = BleScanner(context)
@@ -167,6 +169,9 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             bleScanner?.start()
             bleScanner?.registerBtReceiver()
+
+            bleGattManager = BleGattManager(context)
+            server.bleGattManager = bleGattManager
         }
 
         // Wire bleScanner to httpServer AFTER bleScanner is created
@@ -317,10 +322,19 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                     bleScanner?.start()
                     bleScanner?.registerBtReceiver()
                     httpServer?.bleScanner = bleScanner
+
+                    if (bleGattManager == null) {
+                        bleGattManager = BleGattManager(context)
+                        server.bleGattManager = bleGattManager
+                    }
                 } else {
                     bleScanner?.unregisterBtReceiver()
                     bleScanner?.stop()
                     httpServer?.bleScanner = null
+
+                    bleGattManager?.disconnectAll()
+                    bleGattManager = null
+                    server.bleGattManager = null
                 }
             }
             "bleScanMode", "bleRssiThreshold", "bleBatchIntervalMs", "bleUuidFilter" -> {
@@ -631,6 +645,9 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         bleScanner?.unregisterBtReceiver()
         bleScanner?.stop()
         bleScanner = null
+        bleGattManager?.disconnectAll()
+        bleGattManager = null
+        server.bleGattManager = null
         try { context.unregisterReceiver(appInstallReceiver) } catch (e: Exception) {}
         appInstallReceiver = null
 
