@@ -98,11 +98,6 @@ def _build_service_collection(services_data: list[dict]) -> BleakGATTServiceColl
 class VacaBLEScanner(BaseHaRemoteScanner):
     """BLE scanner that receives advertisements from the Android device via Wyoming."""
 
-    @property
-    def scanning(self) -> bool:
-        """Always report as scanning — VACA is continuously scanning on the Android side."""
-        return True
-
     @callback
     def inject_advertisement(self, adv_data: dict) -> None:
         """Inject a BLE advertisement received from Android."""
@@ -577,7 +572,11 @@ def _gatt_key(address: str, service: str, characteristic: str) -> str:
 # ── Scanner registration ───────────────────────────────────────────────────────
 
 async def async_connect_ble_scanner(
-    hass: HomeAssistant, entry: ConfigEntry, gatt_proxy: VacaBleGattProxy
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    gatt_proxy: VacaBleGattProxy,
+    source_model: str | None = None,
+    source_device_id: str | None = None,
 ) -> tuple[VacaBLEScanner, CALLBACK_TYPE]:
     """Create and register a connectable BLE scanner for this config entry."""
     source = f"vaca_{entry.unique_id or entry.entry_id}"
@@ -603,6 +602,8 @@ async def async_connect_ble_scanner(
         scanner,
         source_domain=DOMAIN,
         source_config_entry_id=entry.entry_id,
+        source_model=source_model,
+        source_device_id=source_device_id,
     )
 
     @callback

@@ -1,0 +1,1 @@
+.\gradlew.bat assembleDebug --parallel --build-cache; if ($LASTEXITCODE -eq 0) { adb install -r -g .\app\build\outputs\apk\debug\vaca-0.10.0-debug.apk; if ($LASTEXITCODE -eq 0) { adb shell monkey -p com.msp1974.vacompanion -c android.intent.category.LAUNCHER 1 } }

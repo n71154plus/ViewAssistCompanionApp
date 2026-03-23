@@ -147,23 +147,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, service.platforms)
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
-    # Set up BLE scanner and GATT proxy if satellite
-    if service.info.satellite is not None:
-        # Proxy must be created first so the scanner's connector can reference it
-        gatt_proxy = VacaBleGattProxy(hass, entry.entry_id)
-        hass.data.setdefault(f"{DOMAIN}_gatt", {})[entry.entry_id] = gatt_proxy
-
-        def _unload_gatt_proxy() -> None:
-            hass.data.get(f"{DOMAIN}_gatt", {}).pop(entry.entry_id, None)
-
-        entry.async_on_unload(_unload_gatt_proxy)
-
-        ble_scanner, ble_unload = await async_connect_ble_scanner(hass, entry, gatt_proxy)
-        hass.data.setdefault(f"{DOMAIN}_ble", {})[entry.entry_id] = ble_scanner
-        entry.async_on_unload(ble_unload)
-
     if (satellite_info := service.info.satellite) is not None:
-        # Create satellite device
+        # Create satellite device first so scanner can be linked to it
         dev_reg = dr.async_get(hass)
 
         # Use config entry id since only one satellite per entry is supported
@@ -179,6 +164,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             suggested_area=satellite_info.area,
             configuration_url=configuration_url,
         )
+
+        # Set up BLE GATT proxy and scanner, linked to the device above
+        gatt_proxy = VacaBleGattProxy(hass, entry.entry_id)
+        hass.data.setdefault(f"{DOMAIN}_gatt", {})[entry.entry_id] = gatt_proxy
+
+        def _unload_gatt_proxy() -> None:
+            hass.data.get(f"{DOMAIN}_gatt", {}).pop(entry.entry_id, None)
+
+        entry.async_on_unload(_unload_gatt_proxy)
+
+        ble_scanner, ble_unload = await async_connect_ble_scanner(
+            hass,
+            entry,
+            gatt_proxy,
+            source_model=satellite_info.name,
+            source_device_id=device.id,
+        )
+        hass.data.setdefault(f"{DOMAIN}_ble", {})[entry.entry_id] = ble_scanner
+        entry.async_on_unload(ble_unload)
 
         item.device = VASatelliteDevice(
             satellite_id=satellite_id,

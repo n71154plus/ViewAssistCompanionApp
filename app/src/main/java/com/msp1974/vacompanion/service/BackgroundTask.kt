@@ -337,6 +337,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                     bleGattManager?.disconnectAll()
                     bleGattManager = null
                     server.bleGattManager = null
+                    httpServer?.bleGattManager = null
                 }
             }
             "bleScanMode", "bleRssiThreshold", "bleBatchIntervalMs", "bleUuidFilter" -> {

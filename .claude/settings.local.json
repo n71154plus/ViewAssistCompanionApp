@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import habluetooth; import inspect; print\\(inspect.getfile\\(habluetooth\\)\\)\")",
+      "Bash(python -c \"import habluetooth; import inspect; print\\(inspect.getfile\\(habluetooth\\)\\)\")",
+      "Bash(pip show:*)",
+      "Bash(find C:/Python* C:/Program*/Python* -name scanner.py -path */habluetooth/*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
