@@ -3,6 +3,7 @@ package com.msp1974.vacompanion
 import android.Manifest.permission
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.app.UiModeManager
 import android.app.admin.DevicePolicyManager
@@ -131,7 +132,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         log.i("Version ${config.version}")
         log.i("Android version: ${Helpers.getAndroidVersion()}")
         log.i("Name: ${Helpers.getDeviceName()}")
-        log.i("Serial: ${Build.SERIAL}")
+        @Suppress("DEPRECATION") val serial = Build.SERIAL
+        log.i("Serial: $serial")
         log.i("UUID: ${config.uuid}")
         log.i("#################################################################################################")
 
@@ -627,6 +629,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             this.setTurnScreenOn(true);
         } else {
+            @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         }
 
@@ -755,6 +758,22 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             }
         }
 
+        // ACCESS_FINE_LOCATION is required for BLE scanning on all API levels
+        if (ContextCompat.checkSelfPermission(this, permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requiredPermissions += permission.ACCESS_FINE_LOCATION
+            requestID += LOCATION_PERMISSIONS_REQUEST
+        }
+
+        // Android 12+ (API 31+) requires BLUETOOTH_SCAN and BLUETOOTH_CONNECT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                requiredPermissions += permission.BLUETOOTH_SCAN
+                requiredPermissions += permission.BLUETOOTH_CONNECT
+                requestID += BLUETOOTH_PERMISSIONS_REQUEST
+            }
+        }
+
         if (requiredPermissions.isNotEmpty()) {
             log.d("Requesting main permissions")
             log.d("Permissions: ${requiredPermissions.map { it }}")
@@ -785,6 +804,12 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     //config.hasPostNotificationPermission = true
                 }
                 if (appPermissions[i] == permission.WRITE_EXTERNAL_STORAGE && grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+                    log.d("Permission granted: ${appPermissions[i]}")
+                }
+                if (appPermissions[i] == permission.BLUETOOTH_SCAN && grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+                    log.d("Permission granted: ${appPermissions[i]}")
+                }
+                if (appPermissions[i] == permission.BLUETOOTH_CONNECT && grantResults[i] == PackageManager.PERMISSION_GRANTED) {
                     log.d("Permission granted: ${appPermissions[i]}")
                     //config.hasWriteExternalStoragePermission = true
                 }
@@ -819,6 +844,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         private const val CAMERA_PERMISSIONS_REQUEST = 250
         private const val NOTIFICATION_PERMISSIONS_REQUEST = 300
         private const val WRITE_EXTERNAL_STORAGE_PERMISSIONS_REQUEST = 400
+        private const val LOCATION_PERMISSIONS_REQUEST = 450
+        private const val BLUETOOTH_PERMISSIONS_REQUEST = 500
     }
 
     private val onWriteSettingsPermissionActivityResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -857,7 +884,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             config.canSetNotificationPolicyAccess = false
         }
         updatePermissionStatus()
-        checkAndRequestDeviceAdminPermission()
+        checkAndRequestUsageAccessPermission()
     }
 
     private fun checkAndRequestNotificationAccessPolicyPermission() {
@@ -875,14 +902,14 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                         onNotificationAccessPolicyPermissionActivityResult.launch(intent)
                     } catch (e: Exception) {
                         log.i("Device does not require explicit permission")
-                        checkAndRequestDeviceAdminPermission()
+                        checkAndRequestUsageAccessPermission()
                     }
                 }
             }.create().show()
         } else {
             log.d("Notification access policy permission already granted or not supported")
             config.hasPostNotificationPermission = true
-            checkAndRequestDeviceAdminPermission()
+            checkAndRequestUsageAccessPermission()
         }
     }
 
@@ -890,6 +917,58 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         log.i("Device Admin permission result -> ${it.resultCode}")
         updatePermissionStatus()
         initialise()
+    }
+
+    private val onUsageAccessPermissionActivityResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        log.i("Usage access permission result")
+        updatePermissionStatus()
+        checkAndRequestDeviceAdminPermission()
+    }
+
+    private fun hasUsageAccess(): Boolean {
+        return try {
+            val appOps = getSystemService(APP_OPS_SERVICE) as AppOpsManager
+            val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) { false }
+    }
+
+    private fun checkAndRequestUsageAccessPermission() {
+        if (hasUsageAccess()) {
+            log.d("Usage access permission already granted")
+            checkAndRequestDeviceAdminPermission()
+            return
+        }
+        AlertDialog.Builder(this).apply {
+            setTitle("Usage Access Permission")
+            setMessage("VACA needs Usage Access permission to show recently used and frequently used apps on your dashboard. Tap 'Open Settings', find VACA in the list and enable it.")
+            setPositiveButton("Open Settings") { _: DialogInterface?, _: Int ->
+                try {
+                    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                    onUsageAccessPermissionActivityResult.launch(intent)
+                } catch (e: Exception) {
+                    log.w("Cannot open usage access settings: $e")
+                    checkAndRequestDeviceAdminPermission()
+                }
+            }
+            setNegativeButton("Skip") { _: DialogInterface?, _: Int ->
+                log.d("User skipped usage access permission")
+                checkAndRequestDeviceAdminPermission()
+            }
+        }.create().show()
     }
 
     private fun checkAndRequestDeviceAdminPermission() {
@@ -945,6 +1024,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 log.d("Download complete = $uri")
                 setStatus(getString(R.string.status_installing_update))
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    @Suppress("DEPRECATION")
                     val intent = Intent(Intent.ACTION_INSTALL_PACKAGE)
                     intent.setData(uri.toUri())
                     intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

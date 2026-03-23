@@ -1,6 +1,7 @@
 package com.msp1974.vacompanion.utils
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
@@ -24,6 +25,10 @@ class Permissions(val context: Context) {
         const val WRITE_EXTERNAL_STORAGE = Manifest.permission.WRITE_EXTERNAL_STORAGE
         @RequiresApi(Build.VERSION_CODES.TIRAMISU)
         const val POST_NOTIFICATIONS = Manifest.permission.POST_NOTIFICATIONS
+        @RequiresApi(Build.VERSION_CODES.S)
+        const val BLUETOOTH_SCAN = Manifest.permission.BLUETOOTH_SCAN
+        @RequiresApi(Build.VERSION_CODES.S)
+        const val BLUETOOTH_CONNECT = Manifest.permission.BLUETOOTH_CONNECT
 
     }
 
@@ -41,10 +46,16 @@ class Permissions(val context: Context) {
         return true
     }
 
+    fun hasUsageAccessOptional(): Boolean = hasUsageAccess()
+
     fun hasOptionalPermissions(): Boolean {
         val permissions = mutableListOf(WRITE_EXTERNAL_STORAGE)
         if (DeviceCapabilitiesManager(context).hasFrontCamera()) {
             permissions.add(CAMERA)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(BLUETOOTH_SCAN)
+            permissions.add(BLUETOOTH_CONNECT)
         }
 
         for (permission in permissions) {
@@ -77,6 +88,28 @@ class Permissions(val context: Context) {
         Timber.d("Permission $permission = $result")
         return result
 
+    }
+
+
+    fun hasUsageAccess(): Boolean {
+        return try {
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    context.packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    context.packageName
+                )
+            }
+            mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) { false }
     }
 
     fun hasWriteSettingsPermission(): Boolean {

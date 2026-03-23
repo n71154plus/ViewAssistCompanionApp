@@ -1,6 +1,8 @@
 package com.msp1974.vacompanion.utils
 
 import android.app.NotificationManager
+import android.app.usage.UsageStatsManager
+import android.content.pm.ApplicationInfo
 import android.content.Context
 import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
@@ -31,6 +33,8 @@ import timber.log.Timber
 data class InstalledAppInfo(
     val packageName: String,
     val label: String,
+    val category: String = "other",
+    val isSystemApp: Boolean = false,
 )
 
 data class DeviceCapabilitiesData(
@@ -159,14 +163,46 @@ class DeviceCapabilitiesManager(val context: Context) {
         return pm.queryIntentActivities(launcherIntent, PackageManager.GET_META_DATA)
             .mapNotNull { resolveInfo ->
                 try {
+                    val ai = resolveInfo.activityInfo.applicationInfo
+                    val isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                    val category = getAppCategory(ai)
                     InstalledAppInfo(
                         packageName = resolveInfo.activityInfo.packageName,
-                        label = resolveInfo.loadLabel(pm).toString()
+                        label = resolveInfo.loadLabel(pm).toString(),
+                        category = category,
+                        isSystemApp = isSystem,
                     )
                 } catch (e: Exception) { null }
             }
             .distinctBy { it.packageName }
             .sortedBy { it.label.lowercase() }
+    }
+
+    private fun getAppCategory(ai: ApplicationInfo): String {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            return when (ai.category) {
+                ApplicationInfo.CATEGORY_GAME -> "game"
+                ApplicationInfo.CATEGORY_AUDIO -> "audio"
+                ApplicationInfo.CATEGORY_VIDEO -> "video"
+                ApplicationInfo.CATEGORY_IMAGE -> "image"
+                ApplicationInfo.CATEGORY_SOCIAL -> "social"
+                ApplicationInfo.CATEGORY_NEWS -> "news"
+                ApplicationInfo.CATEGORY_MAPS -> "maps"
+                ApplicationInfo.CATEGORY_PRODUCTIVITY -> "productivity"
+                ApplicationInfo.CATEGORY_ACCESSIBILITY -> "accessibility"
+                else -> "other"
+            }
+        }
+        // Fallback: guess by package name keywords
+        val pkg = ai.packageName.lowercase()
+        return when {
+            listOf("game", "play", "arcade", "puzzle").any { pkg.contains(it) } -> "game"
+            listOf("music", "spotify", "youtube", "video", "player", "media").any { pkg.contains(it) } -> "media"
+            listOf("map", "navigation", "gps", "waze", "uber").any { pkg.contains(it) } -> "maps"
+            listOf("social", "facebook", "twitter", "instagram", "whatsapp", "telegram", "line").any { pkg.contains(it) } -> "social"
+            listOf("news", "reader", "rss").any { pkg.contains(it) } -> "news"
+            else -> "other"
+        }
     }
 
     companion object {
@@ -196,6 +232,8 @@ class DeviceCapabilitiesManager(val context: Context) {
                             add(buildJsonObject {
                                 put("package_name", app.packageName)
                                 put("label", app.label)
+                                put("category", app.category)
+                                put("is_system", app.isSystemApp)
                             })
                         }
                     }
@@ -206,30 +244,72 @@ class DeviceCapabilitiesManager(val context: Context) {
             }
         }
 
-        // Keep backward-compatible overload used by ClientHandler
-        fun toJson(data: DeviceCapabilitiesData): JsonObject = buildJsonObject {
-            putJsonObject("capabilities") {
-                put("device_signature", data.deviceSignature)
-                put("app_version", data.appVersion)
-                put("sdk_version", data.sdkVersion)
-                put("webview_version", data.webViewVersion)
-                put("release", data.release)
-                put("has_battery", data.hasBattery)
-                put("has_front_camera", data.hasFrontCamera)
-                put("has_dnd", data.hasDND)
-                put("proximity_sensor_type", data.proximitySensorType)
-                putJsonObject("audio") {
-                    put("max_music_volume", data.audioInfo.getValue("maxMusicVolume"))
-                    put("max_notification_volume", data.audioInfo.getValue("maxNotificationVolume"))
-                }
-                putJsonArray("sensors") { addAll(data.sensors) }
-                putJsonArray("installed_apps") {
-                    data.installedApps.forEach { app ->
-                        add(buildJsonObject {
-                            put("package_name", app.packageName)
-                            put("label", app.label)
-                        })
+        // Backward-compatible overload used by ClientHandler (context stored in companion)
+        @Volatile var appContext: Context? = null
+
+        fun toJson(data: DeviceCapabilitiesData): JsonObject {
+            val ctx = appContext
+            val config = ctx?.let { APPConfig.getInstance(it) }
+            val recentApps = if (ctx != null && config?.recentAppsEnabled == true)
+                RecentAppsManager(ctx).getRecentApps(config.recentAppsCount)
+            else emptyList()
+            val frequentApps = if (ctx != null && config?.recentAppsEnabled == true)
+                RecentAppsManager(ctx).getFrequentApps(config.frequentAppsCount)
+            else emptyList()
+
+            return buildJsonObject {
+                putJsonObject("capabilities") {
+                    put("device_signature", data.deviceSignature)
+                    put("app_version", data.appVersion)
+                    put("sdk_version", data.sdkVersion)
+                    put("webview_version", data.webViewVersion)
+                    put("release", data.release)
+                    put("has_battery", data.hasBattery)
+                    put("has_front_camera", data.hasFrontCamera)
+                    put("has_dnd", data.hasDND)
+                    put("proximity_sensor_type", data.proximitySensorType)
+                    putJsonObject("audio") {
+                        put("max_music_volume", data.audioInfo.getValue("maxMusicVolume"))
+                        put("max_notification_volume", data.audioInfo.getValue("maxNotificationVolume"))
                     }
+                    putJsonArray("sensors") { addAll(data.sensors) }
+                    putJsonArray("installed_apps") {
+                        data.installedApps.forEach { app ->
+                            add(buildJsonObject {
+                                put("package_name", app.packageName)
+                                put("label", app.label)
+                                put("category", app.category)
+                                put("is_system", app.isSystemApp)
+                            })
+                        }
+                    }
+                    if (config?.httpServerEnabled == true && config.iconServerEnabled) {
+                        put("icon_server_port", APPConfig.HTTP_SERVER_PORT)
+                    }
+                    putJsonArray("recent_apps") {
+                        recentApps.forEach { app ->
+                            add(buildJsonObject {
+                                put("package_name", app.packageName)
+                                put("label", app.label)
+                                put("last_used", app.lastUsed)
+                                put("use_count", app.useCount)
+                                put("category", app.category)
+                            })
+                        }
+                    }
+                    putJsonArray("frequent_apps") {
+                        frequentApps.forEach { app ->
+                            add(buildJsonObject {
+                                put("package_name", app.packageName)
+                                put("label", app.label)
+                                put("last_used", app.lastUsed)
+                                put("use_count", app.useCount)
+                                put("category", app.category)
+                            })
+                        }
+                    }
+                    put("recent_apps_enabled", config?.recentAppsEnabled ?: false)
+                    put("has_usage_stats_permission", ctx?.let { RecentAppsManager(it).hasUsagePermission() } ?: false)
                 }
             }
         }

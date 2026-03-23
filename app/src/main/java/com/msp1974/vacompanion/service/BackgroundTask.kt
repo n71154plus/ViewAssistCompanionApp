@@ -154,13 +154,23 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         }
 
         // Start BLE scanner if enabled
+        Timber.d("BackgroundTask start(): bleProxyEnabled=${config.bleProxyEnabled}")
         if (config.bleProxyEnabled) {
             bleScanner = BleScanner(context)
             bleScanner?.onAdvertisement = { data ->
-                server.pipelineClient?.sendBleAdvertisement(data)
+                val client = server.pipelineClient
+                if (client != null) {
+                    client.sendBleAdvertisement(data)
+                } else {
+                    Timber.w("BLE adv dropped: pipelineClient is null (HA not connected)")
+                }
             }
             bleScanner?.start()
+            bleScanner?.registerBtReceiver()
         }
+
+        // Wire bleScanner to httpServer AFTER bleScanner is created
+        httpServer?.bleScanner = bleScanner
 
         // Register app install receiver
         appInstallReceiver = AppInstallReceiver {
@@ -254,24 +264,74 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             "httpServerEnabled" -> {
                 if (event.newValue as Boolean) {
+                    // Stop any existing server first to free the port
+                    httpServer?.stop()
+                    httpServer = null
+                    Thread.sleep(200) // Brief wait for OS to release port
                     httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
                     httpServer?.mjpegFrameProvider = { motionTask.latestJpegFrame }
+                    httpServer?.bleScanner = bleScanner
                     httpServer?.start()
                 } else {
                     httpServer?.stop()
                     httpServer = null
                 }
             }
-            "iconServerEnabled", "mjpegStreamEnabled" -> { /* handled by VacaHttpServer internally */ }
+            "iconServerEnabled" -> {
+                // Resend capabilities so HA knows icon_server_port has changed
+                server.deviceInfo = DeviceCapabilitiesManager(context).getDeviceInfo()
+                server.pipelineClient?.sendCapabilities()
+            }
+            "mjpegStreamEnabled" -> {
+                // Start/stop camera independently for MJPEG stream
+                if (event.newValue as Boolean) {
+                    if (!config.enableMotionDetection) {
+                        motionTask.startCamera()
+                    }
+                } else {
+                    if (!config.enableMotionDetection) {
+                        motionTask.stopCamera()
+                    }
+                }
+            }
+            "mjpegFps" -> {
+                // Restart camera session with new FPS
+                motionTask.restartWithNewFps()
+            }
+            "recentAppsEnabled", "recentAppsCount", "frequentAppsCount" -> {
+                // Resend capabilities so HA gets updated recent/frequent apps lists
+                server.pipelineClient?.sendCapabilities()
+            }
+            "mjpegQuality" -> { /* quality applied per-frame, no restart needed */ }
             "bleProxyEnabled" -> {
                 if (event.newValue as Boolean) {
                     bleScanner = bleScanner ?: BleScanner(context)
                     bleScanner?.onAdvertisement = { data ->
-                        server.pipelineClient?.sendBleAdvertisement(data)
+                        val client = server.pipelineClient
+                        if (client != null) {
+                            client.sendBleAdvertisement(data)
+                        } else {
+                            Timber.w("BLE adv dropped: pipelineClient is null (HA not connected)")
+                        }
                     }
                     bleScanner?.start()
+                    bleScanner?.registerBtReceiver()
+                    httpServer?.bleScanner = bleScanner
                 } else {
+                    bleScanner?.unregisterBtReceiver()
                     bleScanner?.stop()
+                    httpServer?.bleScanner = null
+                }
+            }
+            "bleScanMode", "bleRssiThreshold", "bleBatchIntervalMs", "bleUuidFilter" -> {
+                // Individual setting changes are batched - handled by settingsApplied event
+                // Don't restart here to avoid multiple rapid restarts
+            }
+            "settingsApplied" -> {
+                // Full settings batch applied - do a single consolidated BLE restart if needed
+                if (config.bleProxyEnabled && bleScanner != null) {
+                    Timber.d("BackgroundTask: settingsApplied - triggering single BLE restart")
+                    bleScanner?.applySettings()
                 }
             }
             "restartZeroconf" -> {
@@ -368,15 +428,18 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                 server.sendStatus(data)
             }
         })
-        // Start motion sensor
-        if (config.enableMotionDetection) {
+        // Start motion sensor or MJPEG stream
+        if (config.enableMotionDetection || config.mjpegStreamEnabled) {
             motionTask.startCamera()
         }
     }
 
     fun stopSensors() {
         sensorRunner?.stop()
-        motionTask.stopCamera()
+        // Only stop camera if neither motion detection nor MJPEG stream needs it
+        if (!config.enableMotionDetection && !config.mjpegStreamEnabled) {
+            motionTask.stopCamera()
+        }
     }
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
@@ -565,6 +628,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         server.stop()
         httpServer?.stop()
         httpServer = null
+        bleScanner?.unregisterBtReceiver()
         bleScanner?.stop()
         bleScanner = null
         try { context.unregisterReceiver(appInstallReceiver) } catch (e: Exception) {}

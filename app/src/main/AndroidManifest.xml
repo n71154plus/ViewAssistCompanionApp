@@ -30,6 +30,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!--Allow query packages, needed for starting apps/intents -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -40,8 +41,8 @@
         tools:ignore="ProtectedPermissions" />
 
     <!--Restart Service After Reboot the Mobile Device-->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -88,7 +89,7 @@
         <!--Service-->
         <service
             android:name=".service.VAForegroundService"
-            android:foregroundServiceType="microphone|mediaPlayback|camera"
+            android:foregroundServiceType="microphone|mediaPlayback|camera|connectedDevice"
             android:exported="false" />
 
         <!--Broadcast Receiver (Optional)-->

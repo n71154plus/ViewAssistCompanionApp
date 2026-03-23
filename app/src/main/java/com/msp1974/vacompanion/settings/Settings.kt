@@ -270,16 +270,15 @@ class APPConfig(val context: Context) {
         get() = this.sharedPrefs.getBoolean("always_ignore_ssl_errors", false)
         set(value) = this.sharedPrefs.edit { putBoolean("always_ignore_ssl_errors", value) }
 
-    
     var httpServerEnabled: Boolean
-        get() = this.sharedPrefs.getBoolean("http_server_enabled", false)
+        get() = this.sharedPrefs.getBoolean("http_server_enabled", true)
         set(value) {
             this.sharedPrefs.edit { putBoolean("http_server_enabled", value) }
             eventBroadcaster.notifyEvent(Event("httpServerEnabled", !value, value))
         }
 
     var iconServerEnabled: Boolean
-        get() = this.sharedPrefs.getBoolean("icon_server_enabled", false)
+        get() = this.sharedPrefs.getBoolean("icon_server_enabled", true)
         set(value) {
             this.sharedPrefs.edit { putBoolean("icon_server_enabled", value) }
             eventBroadcaster.notifyEvent(Event("iconServerEnabled", !value, value))
@@ -292,11 +291,76 @@ class APPConfig(val context: Context) {
             eventBroadcaster.notifyEvent(Event("mjpegStreamEnabled", !value, value))
         }
 
+    var mjpegFps: Int
+        get() = this.sharedPrefs.getInt("mjpeg_fps", MJPEG_DEFAULT_FPS)
+        set(value) {
+            this.sharedPrefs.edit { putInt("mjpeg_fps", value) }
+            eventBroadcaster.notifyEvent(Event("mjpegFps", mjpegFps, value))
+        }
+
+    var mjpegQuality: Int
+        get() = this.sharedPrefs.getInt("mjpeg_quality", 70)
+        set(value) {
+            this.sharedPrefs.edit { putInt("mjpeg_quality", value) }
+            eventBroadcaster.notifyEvent(Event("mjpegQuality", mjpegQuality, value))
+        }
+
+    // Extra rotation applied on top of sensor orientation correction (0/90/180/270)
+
     var bleProxyEnabled: Boolean
         get() = this.sharedPrefs.getBoolean("ble_proxy_enabled", false)
         set(value) {
             this.sharedPrefs.edit { putBoolean("ble_proxy_enabled", value) }
             eventBroadcaster.notifyEvent(Event("bleProxyEnabled", !value, value))
+        }
+
+    var bleScanMode: Int
+        get() = this.sharedPrefs.getInt("ble_scan_mode", BLE_DEFAULT_SCAN_MODE)
+        set(value) {
+            this.sharedPrefs.edit { putInt("ble_scan_mode", value) }
+            eventBroadcaster.notifyEvent(Event("bleScanMode", bleScanMode, value))
+        }
+
+    var bleRssiThreshold: Int
+        get() = this.sharedPrefs.getInt("ble_rssi_threshold", BLE_DEFAULT_RSSI_THRESHOLD)
+        set(value) {
+            this.sharedPrefs.edit { putInt("ble_rssi_threshold", value) }
+            eventBroadcaster.notifyEvent(Event("bleRssiThreshold", bleRssiThreshold, value))
+        }
+
+    var bleBatchIntervalMs: Long
+        get() = this.sharedPrefs.getLong("ble_batch_interval_ms", BLE_BATCH_INTERVAL_MS)
+        set(value) {
+            this.sharedPrefs.edit { putLong("ble_batch_interval_ms", value) }
+            eventBroadcaster.notifyEvent(Event("bleBatchIntervalMs", bleBatchIntervalMs, value))
+        }
+
+    var bleUuidFilter: String
+        get() = this.sharedPrefs.getString("ble_uuid_filter", "") ?: ""
+        set(value) {
+            this.sharedPrefs.edit { putString("ble_uuid_filter", value) }
+            eventBroadcaster.notifyEvent(Event("bleUuidFilter", bleUuidFilter, value))
+        }
+
+    var recentAppsCount: Int
+        get() = this.sharedPrefs.getInt("recent_apps_count", 10)
+        set(value) {
+            this.sharedPrefs.edit { putInt("recent_apps_count", value) }
+            eventBroadcaster.notifyEvent(Event("recentAppsCount", recentAppsCount, value))
+        }
+
+    var frequentAppsCount: Int
+        get() = this.sharedPrefs.getInt("frequent_apps_count", 10)
+        set(value) {
+            this.sharedPrefs.edit { putInt("frequent_apps_count", value) }
+            eventBroadcaster.notifyEvent(Event("frequentAppsCount", frequentAppsCount, value))
+        }
+
+    var recentAppsEnabled: Boolean
+        get() = this.sharedPrefs.getBoolean("recent_apps_enabled", false)
+        set(value) {
+            this.sharedPrefs.edit { putBoolean("recent_apps_enabled", value) }
+            eventBroadcaster.notifyEvent(Event("recentAppsEnabled", !value, value))
         }
 
     fun processSettings(settingString: String) {
@@ -413,9 +477,7 @@ class APPConfig(val context: Context) {
         if (settings.has("screen_orientation_mode")) {
             screenOrientationMode = settings.getString("screen_orientation_mode")
         }
-
-
-                if (settings.has("http_server_enabled")) {
+        if (settings.has("http_server_enabled")) {
             httpServerEnabled = settings.getBoolean("http_server_enabled")
         }
         if (settings.has("icon_server_enabled")) {
@@ -424,11 +486,40 @@ class APPConfig(val context: Context) {
         if (settings.has("mjpeg_stream_enabled")) {
             mjpegStreamEnabled = settings.getBoolean("mjpeg_stream_enabled")
         }
+        if (settings.has("mjpeg_fps")) {
+            mjpegFps = settings.getInt("mjpeg_fps")
+        }
+        if (settings.has("mjpeg_quality")) {
+            mjpegQuality = settings.getInt("mjpeg_quality")
+        }
         if (settings.has("ble_proxy_enabled")) {
             bleProxyEnabled = settings.getBoolean("ble_proxy_enabled")
         }
+        if (settings.has("ble_scan_mode")) {
+            bleScanMode = settings.getInt("ble_scan_mode")
+        }
+        if (settings.has("ble_rssi_threshold")) {
+            bleRssiThreshold = settings.getInt("ble_rssi_threshold")
+        }
+        if (settings.has("ble_batch_interval_ms")) {
+            bleBatchIntervalMs = settings.getLong("ble_batch_interval_ms")
+        }
+        if (settings.has("ble_uuid_filter")) {
+            bleUuidFilter = settings.getString("ble_uuid_filter")
+        }
+        if (settings.has("recent_apps_count")) {
+            recentAppsCount = settings.getInt("recent_apps_count")
+        }
+        if (settings.has("frequent_apps_count")) {
+            frequentAppsCount = settings.getInt("frequent_apps_count")
+        }
+        if (settings.has("recent_apps_enabled")) {
+            recentAppsEnabled = settings.getBoolean("recent_apps_enabled")
+        }
 
         Firebase.crashlytics.log("Settings update")
+        // Signal that a full settings batch has been applied
+        eventBroadcaster.notifyEvent(Event("settingsApplied", "", ""))
     }
 
     @SuppressLint("HardwareIds")
@@ -467,7 +558,6 @@ class APPConfig(val context: Context) {
     companion object {
         const val NAME = "VACA"
         const val SERVER_PORT = 10800
-        const val HTTP_SERVER_PORT = 8080
         const val DEFAULT_HA_HTTP_PORT = 8123
         const val DEFAULT_RAW_PROXIMITY_THRESHOLD = 300
         const val DEFAULT_WAKE_WORD = "hey_jarvis"
@@ -482,6 +572,11 @@ class APPConfig(val context: Context) {
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
+        const val HTTP_SERVER_PORT = 8080
+        const val MJPEG_DEFAULT_FPS = 10
+        const val BLE_BATCH_INTERVAL_MS = 500L
+        const val BLE_DEFAULT_RSSI_THRESHOLD = -100
+        const val BLE_DEFAULT_SCAN_MODE = 2
 
         @Volatile
         private var instance: APPConfig? = null
