@@ -6,6 +6,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import com.msp1974.vacompanion.sensors.BleGattCallback
+import com.msp1974.vacompanion.sensors.BleGattManager
+import com.msp1974.vacompanion.sensors.BleGattServiceInfo
 import com.msp1974.vacompanion.sensors.BleScanner
 import com.msp1974.vacompanion.settings.APPConfig
 import timber.log.Timber
@@ -26,6 +29,65 @@ class VacaHttpServer(
     private val config = APPConfig.getInstance(context)
     var mjpegFrameProvider: (() -> ByteArray?)? = null
     var bleScanner: BleScanner? = null
+
+    // ── BLE GATT event buffer (for polling by GATT explorer UI) ──────────────
+    private data class BleEvent(val type: String, val ts: Long, val payload: String)
+    private val bleEvents = java.util.concurrent.ConcurrentHashMap<String, ArrayDeque<BleEvent>>()
+    private val BLE_EVENT_MAX = 200
+
+    private fun addBleEvent(address: String, type: String, payload: String) {
+        val deque = bleEvents.getOrPut(address) { ArrayDeque() }
+        synchronized(deque) {
+            deque.addLast(BleEvent(type, System.currentTimeMillis(), payload))
+            while (deque.size > BLE_EVENT_MAX) deque.removeFirst()
+        }
+    }
+
+    private val gattCallback = object : BleGattCallback {
+        override fun onConnected(address: String, services: List<BleGattServiceInfo>) {
+            val sb = StringBuilder("{\"services\":[")
+            services.forEachIndexed { si, svc ->
+                if (si > 0) sb.append(",")
+                sb.append("{\"uuid\":\"${svc.uuid}\",\"chars\":[")
+                svc.characteristics.forEachIndexed { ci, ch ->
+                    if (ci > 0) sb.append(",")
+                    sb.append("{\"uuid\":\"${ch.uuid}\",\"props\":${ch.properties}}")
+                }
+                sb.append("]}")
+            }
+            sb.append("]}")
+            addBleEvent(address, "connected", sb.toString())
+        }
+        override fun onDisconnected(address: String) {
+            addBleEvent(address, "disconnected", "{}")
+        }
+        override fun onReadResult(address: String, serviceUuid: String, characteristicUuid: String, value: ByteArray) {
+            val hex = value.joinToString("") { "%02x".format(it) }
+            val ascii = value.map { if (it in 0x20..0x7e) it.toInt().toChar() else '.' }.joinToString("")
+            val safeAscii = ascii.replace("\\", "\\\\").replace("\"", "\\\"")
+            addBleEvent(address, "read", "{\"service\":\"$serviceUuid\",\"char\":\"$characteristicUuid\",\"hex\":\"$hex\",\"ascii\":\"$safeAscii\",\"len\":${value.size}}")
+        }
+        override fun onWriteResult(address: String, serviceUuid: String, characteristicUuid: String, success: Boolean) {
+            addBleEvent(address, "write", "{\"service\":\"$serviceUuid\",\"char\":\"$characteristicUuid\",\"success\":$success}")
+        }
+        override fun onNotification(address: String, serviceUuid: String, characteristicUuid: String, value: ByteArray) {
+            val hex = value.joinToString("") { "%02x".format(it) }
+            val ascii = value.map { if (it in 0x20..0x7e) it.toInt().toChar() else '.' }.joinToString("")
+            val safeAscii = ascii.replace("\\", "\\\\").replace("\"", "\\\"")
+            addBleEvent(address, "notification", "{\"service\":\"$serviceUuid\",\"char\":\"$characteristicUuid\",\"hex\":\"$hex\",\"ascii\":\"$safeAscii\",\"len\":${value.size}}")
+        }
+        override fun onError(address: String, operation: String, message: String) {
+            val safeMsg = message.replace("\\", "\\\\").replace("\"", "\\\"")
+            addBleEvent(address, "error", "{\"op\":\"$operation\",\"msg\":\"$safeMsg\"}")
+        }
+    }
+
+    var bleGattManager: BleGattManager? = null
+        set(value) {
+            field?.removeCallback(gattCallback)  // clean up old manager
+            field = value
+            value?.addCallback(gattCallback)
+        }
 
     // i18n JS served as /i18n.js - loaded by all pages via <script src>
     private val i18nJsContent: String = "var I18N={\"back\":{\"en\":\"← Back\",\"zh-TW\":\"← 返回\",\"zh-CN\":\"← 返回\",\"de\":\"← Zurück\",\"ja\":\"← 戻る\",\"ko\":\"← 뒤로\"},\"save\":{\"en\":\"Save Settings\",\"zh-TW\":\"儲存設定\",\"zh-CN\":\"保存设置\",\"de\":\"Einstellungen speichern\",\"ja\":\"設定を保存\",\"ko\":\"설정 저장\"},\"saved_ok\":{\"en\":\"✅ Saved!\",\"zh-TW\":\"✅ 儲存成功！\",\"zh-CN\":\"✅ 保存成功！\",\"de\":\"✅ Gespeichert!\",\"ja\":\"✅ 保存しました！\",\"ko\":\"✅ 저장됨!\"},\"save_fail\":{\"en\":\"❌ Save failed\",\"zh-TW\":\"❌ 儲存失敗\",\"zh-CN\":\"❌ 保存失败\",\"de\":\"❌ Speichern fehlgeschlagen\",\"ja\":\"❌ 保存失敗\",\"ko\":\"❌ 저장 실패\"},\"refresh\":{\"en\":\"Refresh\",\"zh-TW\":\"重新整理\",\"zh-CN\":\"刷新\",\"de\":\"Aktualisieren\",\"ja\":\"更新\",\"ko\":\"새로 고침\"},\"loading\":{\"en\":\"Loading...\",\"zh-TW\":\"載入中...\",\"zh-CN\":\"加载中...\",\"de\":\"Laden...\",\"ja\":\"読み込み中...\",\"ko\":\"로딩 중...\"},\"ready\":{\"en\":\"Ready\",\"zh-TW\":\"就緒\",\"zh-CN\":\"就绪\",\"de\":\"Bereit\",\"ja\":\"準備完了\",\"ko\":\"준비\"},\"index_title\":{\"en\":\"VACA Management\",\"zh-TW\":\"VACA 管理介面\",\"zh-CN\":\"VACA 管理界面\",\"de\":\"VACA Verwaltung\",\"ja\":\"VACA 管理\",\"ko\":\"VACA 관리\"},\"index_settings\":{\"en\":\"Settings\",\"zh-TW\":\"系統設定\",\"zh-CN\":\"系统设置\",\"de\":\"Einstellungen\",\"ja\":\"設定\",\"ko\":\"설정\"},\"index_wakeword\":{\"en\":\"Wake Word\",\"zh-TW\":\"Wake Word\",\"zh-CN\":\"Wake Word\",\"de\":\"Wake Word\",\"ja\":\"Wake Word\",\"ko\":\"Wake Word\"},\"index_ble\":{\"en\":\"Bluetooth\",\"zh-TW\":\"藍牙裝置\",\"zh-CN\":\"蓝牙设备\",\"de\":\"Bluetooth\",\"ja\":\"Bluetooth\",\"ko\":\"블루투스\"},\"index_logs\":{\"en\":\"Logs\",\"zh-TW\":\"系統日誌\",\"zh-CN\":\"系统日志\",\"de\":\"Protokoll\",\"ja\":\"ログ\",\"ko\":\"로그\"},\"index_snapshot\":{\"en\":\"Snapshot\",\"zh-TW\":\"即時截圖\",\"zh-CN\":\"实时截图\",\"de\":\"Schnappschuss\",\"ja\":\"スナップショット\",\"ko\":\"스냅샷\"},\"index_status\":{\"en\":\"Device Status\",\"zh-TW\":\"裝置狀態\",\"zh-CN\":\"设备状态\",\"de\":\"Gerätestatus\",\"ja\":\"デバイス状態\",\"ko\":\"기기 상태\"},\"section_screen\":{\"en\":\"Screen\",\"zh-TW\":\"螢幕\",\"zh-CN\":\"屏幕\",\"de\":\"Bildschirm\",\"ja\":\"画面\",\"ko\":\"화면\"},\"section_volume\":{\"en\":\"Volume\",\"zh-TW\":\"音量\",\"zh-CN\":\"音量\",\"de\":\"Lautstärke\",\"ja\":\"音量\",\"ko\":\"볼륨\"},\"section_voice\":{\"en\":\"Voice Assistant\",\"zh-TW\":\"語音助理\",\"zh-CN\":\"语音助手\",\"de\":\"Sprachassistent\",\"ja\":\"音声アシスタント\",\"ko\":\"음성 비서\"},\"section_sensors\":{\"en\":\"Sensors / Motion\",\"zh-TW\":\"感測器 / 動作\",\"zh-CN\":\"传感器 / 动作\",\"de\":\"Sensoren / Bewegung\",\"ja\":\"センサー / モーション\",\"ko\":\"센서 / 동작\"},\"section_http\":{\"en\":\"HTTP Services\",\"zh-TW\":\"HTTP 服務\",\"zh-CN\":\"HTTP 服务\",\"de\":\"HTTP-Dienste\",\"ja\":\"HTTP サービス\",\"ko\":\"HTTP 서비스\"},\"section_ble\":{\"en\":\"Bluetooth Proxy\",\"zh-TW\":\"藍牙代理\",\"zh-CN\":\"蓝牙代理\",\"de\":\"Bluetooth-Proxy\",\"ja\":\"Bluetoothプロキシ\",\"ko\":\"블루투스 프록시\"},\"section_apps\":{\"en\":\"App Tracking\",\"zh-TW\":\"App 追蹤\",\"zh-CN\":\"App 追踪\",\"de\":\"App-Tracking\",\"ja\":\"アプリ追跡\",\"ko\":\"앱 추적\"},\"screen_brightness\":{\"en\":\"Brightness\",\"zh-TW\":\"螢幕亮度\",\"zh-CN\":\"屏幕亮度\",\"de\":\"Helligkeit\",\"ja\":\"輝度\",\"ko\":\"밝기\"},\"screen_auto_brightness\":{\"en\":\"Auto Brightness\",\"zh-TW\":\"自動亮度\",\"zh-CN\":\"自动亮度\",\"de\":\"Automatische Helligkeit\",\"ja\":\"自動輝度\",\"ko\":\"자동 밝기\"},\"screen_always_on\":{\"en\":\"Always On\",\"zh-TW\":\"常亮\",\"zh-CN\":\"常亮\",\"de\":\"Immer an\",\"ja\":\"常時点灯\",\"ko\":\"항상 켜짐\"},\"dark_mode\":{\"en\":\"Dark Mode\",\"zh-TW\":\"暗色模式\",\"zh-CN\":\"深色模式\",\"de\":\"Dunkelmodus\",\"ja\":\"ダークモード\",\"ko\":\"다크 모드\"},\"screen_timeout\":{\"en\":\"Screen Timeout (sec)\",\"zh-TW\":\"螢幕逾時 (秒)\",\"zh-CN\":\"屏幕超时 (秒)\",\"de\":\"Bildschirm-Timeout (Sek)\",\"ja\":\"画面タイムアウト (秒)\",\"ko\":\"화면 시간 초과 (초)\"},\"screen_orientation\":{\"en\":\"Orientation\",\"zh-TW\":\"方向\",\"zh-CN\":\"方向\",\"de\":\"Ausrichtung\",\"ja\":\"向き\",\"ko\":\"방향\"},\"orient_auto\":{\"en\":\"Auto\",\"zh-TW\":\"自動\",\"zh-CN\":\"自动\",\"de\":\"Auto\",\"ja\":\"自動\",\"ko\":\"자동\"},\"orient_portrait\":{\"en\":\"Portrait\",\"zh-TW\":\"直向\",\"zh-CN\":\"竖屏\",\"de\":\"Hochformat\",\"ja\":\"縦向き\",\"ko\":\"세로\"},\"orient_landscape\":{\"en\":\"Landscape\",\"zh-TW\":\"橫向\",\"zh-CN\":\"横屏\",\"de\":\"Querformat\",\"ja\":\"横向き\",\"ko\":\"가로\"},\"screen_saver\":{\"en\":\"Screen Saver\",\"zh-TW\":\"螢幕保護\",\"zh-CN\":\"屏幕保护\",\"de\":\"Bildschirmschoner\",\"ja\":\"スクリーンセーバー\",\"ko\":\"화면 보호기\"},\"zoom_level\":{\"en\":\"Zoom Level\",\"zh-TW\":\"縮放等級\",\"zh-CN\":\"缩放级别\",\"de\":\"Zoomstufe\",\"ja\":\"ズームレベル\",\"ko\":\"확대 수준\"},\"mute\":{\"en\":\"Mute\",\"zh-TW\":\"靜音\",\"zh-CN\":\"静音\",\"de\":\"Stumm\",\"ja\":\"ミュート\",\"ko\":\"음소거\"},\"music_volume\":{\"en\":\"Media Volume\",\"zh-TW\":\"音樂音量\",\"zh-CN\":\"媒体音量\",\"de\":\"Medienlautstärke\",\"ja\":\"メディア音量\",\"ko\":\"미디어 볼륨\"},\"notification_volume\":{\"en\":\"Notification Volume\",\"zh-TW\":\"通知音量\",\"zh-CN\":\"通知音量\",\"de\":\"Benachrichtigungslautstärke\",\"ja\":\"通知音量\",\"ko\":\"알림 볼륨\"},\"ducking_volume\":{\"en\":\"Ducking Volume\",\"zh-TW\":\"閃避音量\",\"zh-CN\":\"闪避音量\",\"de\":\"Ducking-Lautstärke\",\"ja\":\"ダッキング音量\",\"ko\":\"덕킹 볼륨\"},\"mic_gain\":{\"en\":\"Mic Gain (dB)\",\"zh-TW\":\"麥克風增益 (dB)\",\"zh-CN\":\"麦克风增益 (dB)\",\"de\":\"Mikrofon-Verstärkung (dB)\",\"ja\":\"マイクゲイン (dB)\",\"ko\":\"마이크 게인 (dB)\"},\"continue_conversation\":{\"en\":\"Continue Conversation\",\"zh-TW\":\"繼續對話\",\"zh-CN\":\"继续对话\",\"de\":\"Gespräch fortführen\",\"ja\":\"会話を続ける\",\"ko\":\"대화 계속\"},\"wake_word_engine\":{\"en\":\"Wake Word Engine\",\"zh-TW\":\"Wake Word 引擎\",\"zh-CN\":\"唤醒词引擎\",\"de\":\"Wake-Word-Engine\",\"ja\":\"Wake Word エンジン\",\"ko\":\"Wake Word 엔진\"},\"wake_word_threshold\":{\"en\":\"Wake Word Threshold\",\"zh-TW\":\"Wake Word 閾值\",\"zh-CN\":\"唤醒词阈值\",\"de\":\"Wake-Word-Schwellenwert\",\"ja\":\"Wake Word しきい値\",\"ko\":\"Wake Word 임계값\"},\"screen_on_wake_word\":{\"en\":\"Wake Screen on Detection\",\"zh-TW\":\"偵測到時喚醒螢幕\",\"zh-CN\":\"检测到时唤醒屏幕\",\"de\":\"Bildschirm bei Erkennung einschalten\",\"ja\":\"検出時に画面を起動\",\"ko\":\"감지 시 화면 켜기\"},\"enable_motion_detection\":{\"en\":\"Motion Detection\",\"zh-TW\":\"動作偵測\",\"zh-CN\":\"动作检测\",\"de\":\"Bewegungserkennung\",\"ja\":\"モーション検出\",\"ko\":\"동작 감지\"},\"motion_sensitivity\":{\"en\":\"Motion Sensitivity\",\"zh-TW\":\"動作靈敏度\",\"zh-CN\":\"动作灵敏度\",\"de\":\"Bewegungsempfindlichkeit\",\"ja\":\"モーション感度\",\"ko\":\"동작 감도\"},\"screen_on_motion\":{\"en\":\"Wake Screen on Motion\",\"zh-TW\":\"動作喚醒螢幕\",\"zh-CN\":\"动作唤醒屏幕\",\"de\":\"Bildschirm bei Bewegung\",\"ja\":\"動作で画面を起動\",\"ko\":\"동작 시 화면 켜기\"},\"screen_on_proximity\":{\"en\":\"Wake Screen on Proximity\",\"zh-TW\":\"接近感應喚醒\",\"zh-CN\":\"接近唤醒\",\"de\":\"Bildschirm bei Annäherung\",\"ja\":\"近接で画面を起動\",\"ko\":\"근접 시 화면 켜기\"},\"screen_on_bump\":{\"en\":\"Wake Screen on Bump\",\"zh-TW\":\"撞擊喚醒\",\"zh-CN\":\"碰撞唤醒\",\"de\":\"Bildschirm bei Erschütterung\",\"ja\":\"衝撃で画面を起動\",\"ko\":\"충격 시 화면 켜기\"},\"do_not_disturb\":{\"en\":\"Do Not Disturb\",\"zh-TW\":\"勿擾模式\",\"zh-CN\":\"勿扰模式\",\"de\":\"Nicht stören\",\"ja\":\"マナーモード\",\"ko\":\"방해 금지\"},\"http_server\":{\"en\":\"HTTP Server\",\"zh-TW\":\"HTTP Server\",\"zh-CN\":\"HTTP 服务器\",\"de\":\"HTTP-Server\",\"ja\":\"HTTPサーバー\",\"ko\":\"HTTP 서버\"},\"icon_server\":{\"en\":\"Icon Server\",\"zh-TW\":\"Icon Server\",\"zh-CN\":\"图标服务器\",\"de\":\"Icon-Server\",\"ja\":\"アイコンサーバー\",\"ko\":\"아이콘 서버\"},\"mjpeg_stream\":{\"en\":\"MJPEG Stream\",\"zh-TW\":\"MJPEG 串流\",\"zh-CN\":\"MJPEG 串流\",\"de\":\"MJPEG-Stream\",\"ja\":\"MJPEG ストリーム\",\"ko\":\"MJPEG 스트림\"},\"mjpeg_fps\":{\"en\":\"Stream FPS (1-30)\",\"zh-TW\":\"串流 FPS (1-30)\",\"zh-CN\":\"串流 FPS (1-30)\",\"de\":\"Stream FPS (1-30)\",\"ja\":\"ストリーム FPS (1-30)\",\"ko\":\"스트림 FPS (1-30)\"},\"mjpeg_quality\":{\"en\":\"JPEG Quality (10-100)\",\"zh-TW\":\"JPEG 畫質 (10-100)\",\"zh-CN\":\"JPEG 画质 (10-100)\",\"de\":\"JPEG-Qualität (10-100)\",\"ja\":\"JPEG 品質 (10-100)\",\"ko\":\"JPEG 품질 (10-100)\"},\"ble_proxy\":{\"en\":\"Bluetooth Proxy\",\"zh-TW\":\"藍牙代理\",\"zh-CN\":\"蓝牙代理\",\"de\":\"Bluetooth-Proxy\",\"ja\":\"Bluetoothプロキシ\",\"ko\":\"블루투스 프록시\"},\"ble_scan_mode\":{\"en\":\"Scan Mode\",\"zh-TW\":\"掃描模式\",\"zh-CN\":\"扫描模式\",\"de\":\"Scanmodus\",\"ja\":\"スキャンモード\",\"ko\":\"스캔 모드\"},\"ble_scan_low_power\":{\"en\":\"Low Power\",\"zh-TW\":\"低功耗\",\"zh-CN\":\"低功耗\",\"de\":\"Energiesparmodus\",\"ja\":\"低電力\",\"ko\":\"저전력\"},\"ble_scan_balanced\":{\"en\":\"Balanced\",\"zh-TW\":\"平衡\",\"zh-CN\":\"平衡\",\"de\":\"Ausgewogen\",\"ja\":\"バランス\",\"ko\":\"균형\"},\"ble_scan_low_latency\":{\"en\":\"Low Latency\",\"zh-TW\":\"低延遲\",\"zh-CN\":\"低延迟\",\"de\":\"Niedrige Latenz\",\"ja\":\"低レイテンシ\",\"ko\":\"저지연\"},\"ble_rssi\":{\"en\":\"RSSI Threshold (dBm)\",\"zh-TW\":\"RSSI 門檻 (dBm)\",\"zh-CN\":\"RSSI 阈值 (dBm)\",\"de\":\"RSSI-Schwellenwert (dBm)\",\"ja\":\"RSSI しきい値 (dBm)\",\"ko\":\"RSSI 임계값 (dBm)\"},\"ble_batch\":{\"en\":\"Batch Interval (ms)\",\"zh-TW\":\"批次間隔 (ms)\",\"zh-CN\":\"批量间隔 (ms)\",\"de\":\"Batch-Intervall (ms)\",\"ja\":\"バッチ間隔 (ms)\",\"ko\":\"배치 간격 (ms)\"},\"ble_uuid_filter\":{\"en\":\"UUID Filter (comma separated)\",\"zh-TW\":\"UUID 過濾 (逗號分隔)\",\"zh-CN\":\"UUID 过滤 (逗号分隔)\",\"de\":\"UUID-Filter (kommagetrennt)\",\"ja\":\"UUIDフィルター (カンマ区切り)\",\"ko\":\"UUID 필터 (쉼표 구분)\"},\"ble_uuid_placeholder\":{\"en\":\"Empty = all devices\",\"zh-TW\":\"留空 = 全部\",\"zh-CN\":\"留空 = 全部\",\"de\":\"Leer = alle Geräte\",\"ja\":\"空 = すべて\",\"ko\":\"비우면 = 모두\"},\"recent_apps_enabled\":{\"en\":\"Enable app usage tracking\",\"zh-TW\":\"啟用 App 使用追蹤\",\"zh-CN\":\"启用 App 使用追踪\",\"de\":\"App-Nutzungsverfolgung aktivieren\",\"ja\":\"アプリ使用状況追跡\",\"ko\":\"앱 사용 추적 활성화\"},\"recent_apps_note\":{\"en\":\"Requires Usage Access permission\",\"zh-TW\":\"需要開啟使用記錄存取權限\",\"zh-CN\":\"需要开启使用情况访问权限\",\"de\":\"Erfordert Nutzungszugriffsberechtigung\",\"ja\":\"使用状況アクセス権限が必要\",\"ko\":\"사용 정보 접근 권한 필요\"},\"recent_apps_count\":{\"en\":\"Recent apps count (1-50)\",\"zh-TW\":\"最近使用 App 數量 (1-50)\",\"zh-CN\":\"最近使用 App 数量 (1-50)\",\"de\":\"Anzahl zuletzt genutzter Apps\",\"ja\":\"最近使用したアプリ数\",\"ko\":\"최근 앱 수\"},\"frequent_apps_count\":{\"en\":\"Frequent apps count (1-50)\",\"zh-TW\":\"常用 App 數量 (1-50)\",\"zh-CN\":\"常用 App 数量 (1-50)\",\"de\":\"Anzahl häufig genutzter Apps\",\"ja\":\"よく使うアプリ数\",\"ko\":\"자주 쓰는 앱 수\"},\"open_usage_settings\":{\"en\":\"Open Usage Access Settings\",\"zh-TW\":\"開啟使用記錄存取設定\",\"zh-CN\":\"开启使用情况访问设置\",\"de\":\"Nutzungszugriff öffnen\",\"ja\":\"使用状況アクセスを開く\",\"ko\":\"사용 정보 접근 설정\"},\"ble_nearby\":{\"en\":\"Nearby Bluetooth Devices\",\"zh-TW\":\"附近藍牙裝置\",\"zh-CN\":\"附近蓝牙设备\",\"de\":\"Bluetooth-Geräte in der Nähe\",\"ja\":\"近くのBluetoothデバイス\",\"ko\":\"근처 블루투스 기기\"},\"ble_scanning\":{\"en\":\"● Scanning\",\"zh-TW\":\"● 掃描中\",\"zh-CN\":\"● 扫描中\",\"de\":\"● Wird gescannt\",\"ja\":\"● スキャン中\",\"ko\":\"● 스캔 중\"},\"ble_not_scanning\":{\"en\":\"○ Proxy not enabled\",\"zh-TW\":\"○ 藍牙代理未開啟\",\"zh-CN\":\"○ 蓝牙代理未开启\",\"de\":\"○ Proxy nicht aktiviert\",\"ja\":\"○ プロキシ未有効\",\"ko\":\"○ 프록시 비활성화\"},\"ble_no_devices\":{\"en\":\"No devices detected\",\"zh-TW\":\"沒有偵測到裝置\",\"zh-CN\":\"未检测到设备\",\"de\":\"Keine Geräte erkannt\",\"ja\":\"デバイスなし\",\"ko\":\"기기 없음\"},\"col_name\":{\"en\":\"Name\",\"zh-TW\":\"名稱\",\"zh-CN\":\"名称\",\"de\":\"Name\",\"ja\":\"名前\",\"ko\":\"이름\"},\"col_mac\":{\"en\":\"MAC\",\"zh-TW\":\"MAC\",\"zh-CN\":\"MAC\",\"de\":\"MAC\",\"ja\":\"MAC\",\"ko\":\"MAC\"},\"col_rssi_h\":{\"en\":\"RSSI\",\"zh-TW\":\"RSSI\",\"zh-CN\":\"RSSI\",\"de\":\"RSSI\",\"ja\":\"RSSI\",\"ko\":\"RSSI\"},\"col_services\":{\"en\":\"Services\",\"zh-TW\":\"服務\",\"zh-CN\":\"服务\",\"de\":\"Dienste\",\"ja\":\"サービス\",\"ko\":\"서비스\"},\"col_unknown\":{\"en\":\"(unknown)\",\"zh-TW\":\"(未知)\",\"zh-CN\":\"(未知)\",\"de\":\"(unbekannt)\",\"ja\":\"(不明)\",\"ko\":\"(알 수 없음)\"},\"logs_title\":{\"en\":\"System Logs\",\"zh-TW\":\"系統日誌\",\"zh-CN\":\"系统日志\",\"de\":\"Systemprotokoll\",\"ja\":\"システムログ\",\"ko\":\"시스템 로그\"},\"logs_all\":{\"en\":\"All\",\"zh-TW\":\"全部\",\"zh-CN\":\"全部\",\"de\":\"Alle\",\"ja\":\"すべて\",\"ko\":\"모두\"},\"logs_filter_ph\":{\"en\":\"Filter keyword...\",\"zh-TW\":\"過濾關鍵字...\",\"zh-CN\":\"过滤关键字...\",\"de\":\"Stichwort...\",\"ja\":\"キーワード...\",\"ko\":\"키워드...\"},\"logs_auto\":{\"en\":\"Auto\",\"zh-TW\":\"自動\",\"zh-CN\":\"自动\",\"de\":\"Auto\",\"ja\":\"自動\",\"ko\":\"자동\"},\"logs_stop\":{\"en\":\"Stop\",\"zh-TW\":\"停止\",\"zh-CN\":\"停止\",\"de\":\"Stopp\",\"ja\":\"停止\",\"ko\":\"정지\"},\"logs_clear\":{\"en\":\"Clear\",\"zh-TW\":\"清除\",\"zh-CN\":\"清除\",\"de\":\"Leeren\",\"ja\":\"クリア\",\"ko\":\"지우기\"},\"logs_scroll\":{\"en\":\"Auto scroll\",\"zh-TW\":\"自動捲動\",\"zh-CN\":\"自动滚动\",\"de\":\"Auto-Scroll\",\"ja\":\"自動スクロール\",\"ko\":\"자동 스크롤\"},\"logs_fail\":{\"en\":\"Load failed: \",\"zh-TW\":\"載入失敗：\",\"zh-CN\":\"加载失败：\",\"de\":\"Fehler: \",\"ja\":\"失敗：\",\"ko\":\"실패: \"},\"ww_title\":{\"en\":\"Wake Word Manager\",\"zh-TW\":\"Wake Word 管理\",\"zh-CN\":\"唤醒词管理\",\"de\":\"Wake-Word-Verwaltung\",\"ja\":\"Wake Word 管理\",\"ko\":\"Wake Word 관리\"},\"ww_type\":{\"en\":\"Type\",\"zh-TW\":\"類型\",\"zh-CN\":\"类型\",\"de\":\"Typ\",\"ja\":\"タイプ\",\"ko\":\"유형\"},\"ww_action\":{\"en\":\"Action\",\"zh-TW\":\"操作\",\"zh-CN\":\"操作\",\"de\":\"Aktion\",\"ja\":\"操作\",\"ko\":\"작업\"},\"ww_builtin\":{\"en\":\"Built-in\",\"zh-TW\":\"內建\",\"zh-CN\":\"内置\",\"de\":\"Integriert\",\"ja\":\"組み込み\",\"ko\":\"내장\"},\"ww_custom\":{\"en\":\"Custom\",\"zh-TW\":\"自訂\",\"zh-CN\":\"自定义\",\"de\":\"Benutzerdefiniert\",\"ja\":\"カスタム\",\"ko\":\"사용자 정의\"},\"ww_active\":{\"en\":\"Active\",\"zh-TW\":\"使用中\",\"zh-CN\":\"使用中\",\"de\":\"Aktiv\",\"ja\":\"使用中\",\"ko\":\"활성\"},\"ww_activate\":{\"en\":\"Activate\",\"zh-TW\":\"啟用\",\"zh-CN\":\"启用\",\"de\":\"Aktivieren\",\"ja\":\"有効にする\",\"ko\":\"활성화\"},\"ww_delete\":{\"en\":\"Delete\",\"zh-TW\":\"刪除\",\"zh-CN\":\"删除\",\"de\":\"Löschen\",\"ja\":\"削除\",\"ko\":\"삭제\"},\"ww_del_confirm\":{\"en\":\"Confirm delete?\",\"zh-TW\":\"確定刪除？\",\"zh-CN\":\"确定删除？\",\"de\":\"Wirklich löschen?\",\"ja\":\"削除しますか？\",\"ko\":\"삭제하시겠습니까?\"},\"ww_upload_title\":{\"en\":\"Upload Wake Word (.onnx)\",\"zh-TW\":\"上傳 Wake Word (.onnx)\",\"zh-CN\":\"上传唤醒词 (.onnx)\",\"de\":\"Wake Word hochladen (.onnx)\",\"ja\":\"Wake Wordをアップロード (.onnx)\",\"ko\":\"Wake Word 업로드 (.onnx)\"},\"ww_drag\":{\"en\":\"Drag .onnx here, or\",\"zh-TW\":\"拖拉 .onnx 到此處，或\",\"zh-CN\":\"拖拽 .onnx 到此处，或\",\"de\":\".onnx hier ablegen, oder\",\"ja\":\".onnxをここにドラッグ、または\",\"ko\":\".onnx 파일을 여기에 드래그하거나\"},\"ww_only_onnx\":{\"en\":\"Only .onnx supported\",\"zh-TW\":\"只支援 .onnx\",\"zh-CN\":\"仅支持 .onnx\",\"de\":\"Nur .onnx\",\"ja\":\".onnxのみ\",\"ko\":\".onnx만 지원\"},\"ww_uploading\":{\"en\":\"Uploading...\",\"zh-TW\":\"上傳中...\",\"zh-CN\":\"上传中...\",\"de\":\"Hochladen...\",\"ja\":\"アップロード中...\",\"ko\":\"업로드 중...\"},\"ww_upload_ok\":{\"en\":\"Uploaded! Reloading...\",\"zh-TW\":\"上傳成功！重新載入...\",\"zh-CN\":\"上传成功！重新加载...\",\"de\":\"Hochgeladen! Neu laden...\",\"ja\":\"完了！再読み込み中...\",\"ko\":\"완료! 다시 로드 중...\"},\"ww_upload_fail\":{\"en\":\"Upload failed\",\"zh-TW\":\"上傳失敗\",\"zh-CN\":\"上传失败\",\"de\":\"Fehler\",\"ja\":\"失敗\",\"ko\":\"실패\"},\"ww_del_fail\":{\"en\":\"Delete failed\",\"zh-TW\":\"刪除失敗\",\"zh-CN\":\"删除失败\",\"de\":\"Löschen fehlgeschlagen\",\"ja\":\"削除失敗\",\"ko\":\"삭제 실패\"},\"ww_act_fail\":{\"en\":\"Activate failed\",\"zh-TW\":\"啟用失敗\",\"zh-CN\":\"启用失败\",\"de\":\"Aktivierung fehlgeschlagen\",\"ja\":\"有効化失敗\",\"ko\":\"활성화 실패\"},\"logs_lines\":{\"en\":\"lines\",\"zh-TW\":\"行\",\"zh-CN\":\"行\",\"de\":\"Zeilen\",\"ja\":\"行\",\"ko\":\"줄\"}};function t(k){var l=navigator.language||\"en\",s=l.substring(0,2),d=I18N[k];if(!d)return k;return d[l]||d[s+\"-TW\"]||d[s+\"-CN\"]||d[s]||d[\"en\"]||k;}"
@@ -95,7 +157,10 @@ class VacaHttpServer(
             val rawPath = requestLine.substringAfter(" ").substringBefore(" ")
             val path = rawPath.substringBefore("?")
             val query = rawPath.substringAfter("?", "")
-            fun qp(key: String) = query.split("&").firstOrNull { it.startsWith("$key=") }?.substringAfter("=") ?: ""
+            fun qp(key: String): String {
+                val raw = query.split("&").firstOrNull { it.startsWith("$key=") }?.substringAfter("=") ?: return ""
+                return try { java.net.URLDecoder.decode(raw, "UTF-8") } catch (e: Exception) { raw }
+            }
 
             // IMPORTANT: drain all HTTP headers before responding
             // Without this, the next request's data leaks into this connection
@@ -120,6 +185,13 @@ class VacaHttpServer(
                 path == "/wakeword/delete"                  -> handleWakeWordDelete(socket, qp("name"))
                 path == "/wakeword/activate"                -> handleWakeWordActivate(socket, qp("name"))
                 path == "/ble/devices"                      -> handleBleDevices(socket)
+                path == "/ble/connect"   && method == "POST" -> handleBleConnect(socket, qp("address"))
+                path == "/ble/disconnect" && method == "POST" -> handleBleDisconnect(socket, qp("address"))
+                path == "/ble/gatt"      && method == "GET"  -> handleBleGattPage(socket, qp("address"))
+                path == "/ble/read"                          -> handleBleRead(socket, qp("address"), qp("service"), qp("char"))
+                path == "/ble/write"     && method == "POST" -> handleBleWrite(socket, reader, headers, qp("address"), qp("service"), qp("char"))
+                path == "/ble/notify"    && method == "POST" -> handleBleNotify(socket, qp("address"), qp("service"), qp("char"), qp("enable"))
+                path == "/ble/events"                        -> handleBleEvents(socket, qp("address"), qp("since"))
                 path == "/ble" && method == "GET"           -> handleBlePage(socket)
                 path == "/logs" && method == "GET"          -> handleLogsPage(socket)
                 path == "/logs/data"                        -> handleLogsData(socket, qp("level"), qp("filter"), qp("lines"))
@@ -381,7 +453,7 @@ class VacaHttpServer(
         sb.append("<div class=\"scan-status\" style=\"color:${if (scanning) "#4caf50" else "#f44336"}\" id=\"t_scan_status\"></div>")
         sb.append("<button onclick=\"load()\" id=\"t_refresh\"></button><br><br>")
         sb.append("<div class=\"card\"><table>")
-        sb.append("<thead><tr><th id=\"t_col_name\"></th><th id=\"t_col_mac\"></th><th id=\"t_col_rssi\"></th><th id=\"t_col_svc\"></th></tr></thead>")
+        sb.append("<thead><tr><th id=\"t_col_name\"></th><th id=\"t_col_mac\"></th><th id=\"t_col_rssi\"></th><th id=\"t_col_svc\"></th><th></th></tr></thead>")
         sb.append("<tbody id=\"tbody\"><tr><td colspan=\"4\" class=\"empty\" id=\"t_loading\"></td></tr></tbody>")
         sb.append("</table></div>")
         sb.append("<script>")
@@ -407,10 +479,138 @@ class VacaHttpServer(
         sb.append("rows+='<tr><td><b>'+(dev.name||t('col_unknown'))+'</b></td>'")
         sb.append("+'<td style=\"font-family:monospace;font-size:12px\">'+dev.address+'</td>'")
         sb.append("+'<td>'+dev.rssi+' dBm <span class=\"rssi-bar\"><span class=\"rssi-fill\" style=\"width:'+rssiWidth(dev.rssi)+';background:'+rssiColor(dev.rssi)+'\"></span></span></td>'")
-        sb.append("+'<td>'+badges+'</td></tr>';});")
+        sb.append("+'<td>'+badges+'</td>'")
+        sb.append("+'<td><a href=\"/ble/gatt?address='+encodeURIComponent(dev.address)+'\" style=\"font-size:12px;color:#1565c0;text-decoration:none;padding:3px 8px;border:1px solid #1565c0;border-radius:6px\">&#x1F50D; Explore</a></td>'")
+        sb.append("+'</tr>';});")
         sb.append("tb.innerHTML=rows;});}")
         sb.append("load();setInterval(load,3000);")
         sb.append("</script></body></html>")
+        sendString(socket, sb.toString(), "text/html; charset=utf-8")
+    }
+
+    // ── BLE GATT Explorer ─────────────────────────────────────────────────────
+
+    private fun handleBleConnect(socket: Socket, address: String) {
+        if (address.isBlank()) { sendError(socket, 400, "Missing address"); return }
+        if (bleGattManager == null) { sendError(socket, 503, "BLE not enabled"); return }
+        bleGattManager!!.connect(address)
+        sendString(socket, "{\"status\":\"connecting\",\"address\":\"$address\"}", "application/json")
+    }
+
+    private fun handleBleDisconnect(socket: Socket, address: String) {
+        if (address.isBlank()) { sendError(socket, 400, "Missing address"); return }
+        bleGattManager?.disconnect(address)
+        sendString(socket, "{\"status\":\"disconnecting\",\"address\":\"$address\"}", "application/json")
+    }
+
+    private fun handleBleRead(socket: Socket, address: String, service: String, char: String) {
+        if (address.isBlank() || service.isBlank() || char.isBlank()) {
+            sendError(socket, 400, "Missing address/service/char"); return
+        }
+        if (bleGattManager == null) { sendError(socket, 503, "BLE not enabled"); return }
+        bleGattManager!!.readCharacteristic(address, service, char)
+        sendString(socket, "{\"status\":\"reading\"}", "application/json")
+    }
+
+    private fun handleBleWrite(socket: Socket, reader: java.io.BufferedReader, headers: Map<String, String>, address: String, service: String, char: String) {
+        if (address.isBlank() || service.isBlank() || char.isBlank()) {
+            sendError(socket, 400, "Missing address/service/char"); return
+        }
+        if (bleGattManager == null) { sendError(socket, 503, "BLE not enabled"); return }
+        val length = headers["content-length"]?.toIntOrNull() ?: 0
+        val body = if (length > 0) {
+            val buf = CharArray(length.coerceAtMost(512))
+            val read = reader.read(buf, 0, buf.size)
+            String(buf, 0, read.coerceAtLeast(0)).trim()
+        } else ""
+        // Accept hex string like "0102abcd"
+        val bytes = try {
+            body.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        } catch (e: Exception) { sendError(socket, 400, "Invalid hex: $body"); return }
+        bleGattManager!!.writeCharacteristic(address, service, char, bytes)
+        sendString(socket, "{\"status\":\"writing\"}", "application/json")
+    }
+
+    private fun handleBleNotify(socket: Socket, address: String, service: String, char: String, enable: String) {
+        if (address.isBlank() || service.isBlank() || char.isBlank()) {
+            sendError(socket, 400, "Missing address/service/char"); return
+        }
+        if (bleGattManager == null) { sendError(socket, 503, "BLE not enabled"); return }
+        bleGattManager!!.setNotification(address, service, char, enable != "false")
+        sendString(socket, "{\"status\":\"ok\"}", "application/json")
+    }
+
+    private fun handleBleEvents(socket: Socket, address: String, sinceParam: String) {
+        if (address.isBlank()) { sendError(socket, 400, "Missing address"); return }
+        val since = sinceParam.toLongOrNull() ?: 0L
+        val deque = bleEvents[address]
+        val events = if (deque != null) {
+            synchronized(deque) { deque.filter { it.ts > since }.toList() }
+        } else emptyList()
+        val sb = StringBuilder("{\"events\":[")
+        events.forEachIndexed { i, e ->
+            if (i > 0) sb.append(",")
+            sb.append("{\"type\":\"${e.type}\",\"ts\":${e.ts},\"data\":${e.payload}}")
+        }
+        val connected = bleGattManager?.getConnectedAddresses()?.contains(address) ?: false
+        sb.append("],\"connected\":$connected}")
+        sendString(socket, sb.toString(), "application/json")
+    }
+
+    private fun handleBleGattPage(socket: Socket, address: String) {
+        if (address.isBlank()) { sendError(socket, 400, "Missing address"); return }
+        val safeAddr = address.replace("\"", "")
+        val sb = StringBuilder()
+        val css = """
+            table{width:100%;border-collapse:collapse;font-size:13px}
+            .svc-card{background:#fff;border-radius:10px;border:1px solid #e0e0e0;margin-bottom:10px;overflow:hidden}
+            .svc-header{background:#f5f5f5;padding:8px 12px;font-size:12px;font-weight:600;color:#333;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+            .svc-body{padding:0 12px}
+            .char-row{padding:8px 0;border-bottom:1px solid #f0f0f0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+            .char-row:last-child{border-bottom:none}
+            .char-uuid{font-family:monospace;font-size:11px;color:#555;flex:1;min-width:200px}
+            .prop-badge{font-size:10px;padding:1px 5px;border-radius:8px;background:#e8f5e9;color:#2e7d32}
+            .prop-badge.write{background:#fff3e0;color:#e65100}
+            .prop-badge.notify{background:#e3f2fd;color:#1565c0}
+            .btn-sm{font-size:11px;padding:3px 8px;border-radius:6px;border:none;cursor:pointer;background:#4caf50;color:#fff}
+            .btn-sm.secondary{background:#555}.btn-sm.danger{background:#f44336}
+            .val-box{font-family:monospace;font-size:11px;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:4px 8px;margin-top:4px;word-break:break-all;width:100%}
+            .status-bar{font-size:12px;padding:6px 12px;border-radius:8px;margin-bottom:12px;display:inline-block}
+            .status-connected{background:#e8f5e9;color:#2e7d32}
+            .status-disconnected{background:#ffebee;color:#c62828}
+            .status-connecting{background:#fff8e1;color:#f57f17}
+            #event-log{font-family:monospace;font-size:11px;background:#111;color:#eee;border-radius:8px;padding:8px;height:180px;overflow-y:auto;margin-top:10px;white-space:pre-wrap;word-break:break-all}
+        """.trimIndent().replace("\n", "")
+        sb.append(htmlHead("BLE Explorer", css))
+        sb.append("<a class=\"back\" href=\"/ble\">← Back</a>")
+        sb.append("<h1 style=\"font-size:1.1rem;margin:.5rem 0\">&#x1F4E1; BLE Explorer</h1>")
+        sb.append("<div style=\"font-family:monospace;font-size:12px;color:#555;margin-bottom:8px\">$safeAddr</div>")
+        sb.append("<div id=\"status\" class=\"status-bar status-disconnected\">Disconnected</div>")
+        sb.append("<div style=\"display:flex;gap:8px;margin-bottom:12px\">")
+        sb.append("<button class=\"btn-sm\" id=\"btnConnect\" onclick=\"doConnect()\">Connect</button>")
+        sb.append("<button class=\"btn-sm danger\" id=\"btnDisc\" onclick=\"doDisconnect()\" style=\"display:none\">Disconnect</button>")
+        sb.append("</div>")
+        sb.append("<div id=\"services\"></div>")
+        sb.append("<h2 style=\"font-size:.95rem;color:#555;margin:.8rem 0 .3rem\">&#x1F4CB; Log</h2>")
+        sb.append("<div id=\"event-log\"></div>")
+        sb.append("""<script>
+var ADDR=decodeURIComponent("${safeAddr.replace(":", "%3A")}");
+var since=0,connected=false,services=[];
+var propNames={1:'BROADCAST',2:'READ',4:'WRITE_NR',8:'WRITE',16:'NOTIFY',32:'INDICATE',64:'AUTH_WRITE',128:'EXT_PROP'};
+function propBadges(p){var s='';for(var k in propNames){if(p&k)s+='<span class="prop-badge'+(p&(8|4)?' write':'')+(p&(16|32)?' notify':'')+'">'+propNames[k]+'</span> ';}return s;}
+function log(msg){var el=document.getElementById('event-log');el.textContent+=new Date().toLocaleTimeString()+' '+msg+'\n';el.scrollTop=el.scrollHeight;}
+function setStatus(st){var el=document.getElementById('status');el.textContent=st;el.className='status-bar '+(st==='Connected'?'status-connected':st==='Connecting...'?'status-connecting':'status-disconnected');connected=(st==='Connected');document.getElementById('btnConnect').style.display=connected?'none':'inline-block';document.getElementById('btnDisc').style.display=connected?'inline-block':'none';}
+function doConnect(){setStatus('Connecting...');fetch('/ble/connect?address='+encodeURIComponent(ADDR),{method:'POST'}).catch(function(e){log('Connect error: '+e);});}
+function doDisconnect(){fetch('/ble/disconnect?address='+encodeURIComponent(ADDR),{method:'POST'}).catch(function(e){log('Disconnect error: '+e);});}
+function doRead(svc,ch){fetch('/ble/read?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch).catch(function(e){log('Read error: '+e);});}
+function doWrite(svc,ch){var hex=prompt('Enter hex value to write (e.g. 0100):');if(!hex)return;fetch('/ble/write?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch,{method:'POST',headers:{'Content-Type':'text/plain','Content-Length':hex.length.toString()},body:hex}).catch(function(e){log('Write error: '+e);});}
+function doNotify(svc,ch,btn){var enable=btn.dataset.sub!=='1';fetch('/ble/notify?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch+'&enable='+enable,{method:'POST'}).then(function(){btn.textContent=enable?'Unsubscribe':'Subscribe';btn.dataset.sub=enable?'1':'0';log((enable?'Subscribed to ':'Unsubscribed from ')+ch);}).catch(function(e){log('Notify error: '+e);});}
+function renderServices(svcs){services=svcs;var el=document.getElementById('services');if(!svcs||!svcs.length){el.innerHTML='<div style="color:#aaa;font-size:13px">No services</div>';return;}var h='';svcs.forEach(function(svc,si){h+='<div class="svc-card"><div class="svc-header" onclick="toggleSvc('+si+')"><span>'+svc.uuid+'</span><span id="arrow'+si+'">▼</span></div><div class="svc-body" id="svcbody'+si+'">';svc.chars.forEach(function(ch){var hasRead=ch.props&2,hasWrite=ch.props&(4|8),hasNotify=ch.props&(16|32);h+='<div class="char-row"><div class="char-uuid">'+ch.uuid+'<br>'+propBadges(ch.props)+'</div>';if(hasRead)h+='<button class="btn-sm" onclick="doRead(\''+svc.uuid+'\',\''+ch.uuid+'\')">Read</button>';if(hasWrite)h+='<button class="btn-sm secondary" onclick="doWrite(\''+svc.uuid+'\',\''+ch.uuid+'\')">Write</button>';if(hasNotify)h+='<button class="btn-sm notify" data-sub="0" onclick="doNotify(\''+svc.uuid+'\',\''+ch.uuid+'\',this)" style="background:#1565c0">Subscribe</button>';h+='<div class="val-box" id="val_'+ch.uuid.replace(/-/g,\'_\')+'"> </div></div>';});h+='</div></div>';});el.innerHTML=h;}
+function toggleSvc(i){var b=document.getElementById('svcbody'+i),a=document.getElementById('arrow'+i);var v=b.style.display==='none';b.style.display=v?'':'none';a.textContent=v?'▼':'▶';}
+function updateVal(charUuid,hex,ascii){var id='val_'+charUuid.replace(/-/g,'_');var el=document.getElementById(id);if(el)el.textContent='0x'+hex+' ('+ascii+')';}
+function poll(){fetch('/ble/events?address='+encodeURIComponent(ADDR)+'&since='+since).then(function(r){return r.json();}).then(function(d){if(d.events)d.events.forEach(function(e){since=Math.max(since,e.ts);if(e.type==='connected'){setStatus('Connected');renderServices(e.data.services);log('Connected — '+e.data.services.length+' service(s)');}else if(e.type==='disconnected'){setStatus('Disconnected');document.getElementById('services').innerHTML='';log('Disconnected');}else if(e.type==='read'){updateVal(e.data.char,e.data.hex,e.data.ascii);log('Read '+e.data.char+': 0x'+e.data.hex+' ('+e.data.ascii+')');}else if(e.type==='notification'){updateVal(e.data.char,e.data.hex,e.data.ascii);log('Notify '+e.data.char+': 0x'+e.data.hex+' ('+e.data.ascii+')');}else if(e.type==='write'){log('Write '+e.data.char+': '+(e.data.success?'OK':'FAILED'));}else if(e.type==='error'){log('Error ['+e.data.op+']: '+e.data.msg);}});if(d.connected&&!connected)setStatus('Connected');else if(!d.connected&&connected)setStatus('Disconnected');}).catch(function(){});setTimeout(poll,600);}
+poll();
+</script></body></html>""")
         sendString(socket, sb.toString(), "text/html; charset=utf-8")
     }
 

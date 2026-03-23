@@ -174,8 +174,9 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             server.bleGattManager = bleGattManager
         }
 
-        // Wire bleScanner to httpServer AFTER bleScanner is created
+        // Wire bleScanner and bleGattManager to httpServer AFTER they are created
         httpServer?.bleScanner = bleScanner
+        httpServer?.bleGattManager = bleGattManager
 
         // Register app install receiver
         appInstallReceiver = AppInstallReceiver {
@@ -276,6 +277,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                     httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
                     httpServer?.mjpegFrameProvider = { motionTask.latestJpegFrame }
                     httpServer?.bleScanner = bleScanner
+                    httpServer?.bleGattManager = bleGattManager
                     httpServer?.start()
                 } else {
                     httpServer?.stop()

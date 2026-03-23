@@ -76,15 +76,31 @@ private class DeviceConnection(val address: String) {
 class BleGattManager(private val context: Context) {
 
     private val connections = ConcurrentHashMap<String, DeviceConnection>()
-    var callback: BleGattCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // Multi-listener support: all registered callbacks receive every event
+    private val callbackList = java.util.concurrent.CopyOnWriteArrayList<BleGattCallback>()
+    private var _primaryCallback: BleGattCallback? = null
+
+    // Backward-compat single-slot: replaces the previous primary callback
+    var callback: BleGattCallback?
+        get() = _primaryCallback
+        set(value) {
+            _primaryCallback?.let { callbackList.remove(it) }
+            _primaryCallback = value
+            value?.let { if (!callbackList.contains(it)) callbackList.add(it) }
+        }
+
+    fun addCallback(cb: BleGattCallback) { if (!callbackList.contains(cb)) callbackList.add(cb) }
+    fun removeCallback(cb: BleGattCallback) { callbackList.remove(cb) }
+    private fun dispatch(action: BleGattCallback.() -> Unit) { callbackList.forEach { it.action() } }
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
     fun connect(address: String) {
         if (!hasConnectPermission()) {
             Timber.w("BleGatt connect($address): BLUETOOTH_CONNECT not granted")
-            callback?.onError(address, "connect", "BLUETOOTH_CONNECT permission not granted")
+            dispatch { onError(address, "connect", "BLUETOOTH_CONNECT permission not granted") }
             return
         }
         if (connections.containsKey(address)) {
@@ -93,7 +109,7 @@ class BleGattManager(private val context: Context) {
         }
         if (connections.size >= MAX_CONNECTIONS) {
             Timber.w("BleGatt connect($address): max connections ($MAX_CONNECTIONS) reached")
-            callback?.onError(address, "connect", "Max connections ($MAX_CONNECTIONS) reached")
+            dispatch { onError(address, "connect", "Max connections ($MAX_CONNECTIONS) reached") }
             return
         }
 
@@ -101,7 +117,7 @@ class BleGattManager(private val context: Context) {
             ?.adapter
         if (adapter == null || !adapter.isEnabled) {
             Timber.w("BleGatt connect($address): Bluetooth not available")
-            callback?.onError(address, "connect", "Bluetooth not available")
+            dispatch { onError(address, "connect", "Bluetooth not available") }
             return
         }
 
@@ -109,7 +125,7 @@ class BleGattManager(private val context: Context) {
             adapter.getRemoteDevice(address)
         } catch (e: IllegalArgumentException) {
             Timber.e("BleGatt connect($address): invalid address")
-            callback?.onError(address, "connect", "Invalid device address")
+            dispatch { onError(address, "connect", "Invalid device address") }
             return
         }
 
@@ -120,7 +136,7 @@ class BleGattManager(private val context: Context) {
         startTimeout(conn, "connect") {
             Timber.w("BleGatt connect($address): timeout")
             handleDisconnect(address)
-            callback?.onError(address, "connect", "Connection timeout")
+            dispatch { onError(address, "connect", "Connection timeout") }
         }
 
         try {
@@ -134,7 +150,7 @@ class BleGattManager(private val context: Context) {
         } catch (e: SecurityException) {
             Timber.e("BleGatt connect($address): SecurityException — ${e.message}")
             connections.remove(address)
-            callback?.onError(address, "connect", "Security exception: ${e.message}")
+            dispatch { onError(address, "connect", "Security exception: ${e.message}") }
         }
     }
 
@@ -155,23 +171,23 @@ class BleGattManager(private val context: Context) {
 
     fun readCharacteristic(address: String, serviceUuid: String, characteristicUuid: String) {
         val conn = connections[address] ?: run {
-            callback?.onError(address, "read", "Device not connected")
+            dispatch { onError(address, "read", "Device not connected") }
             return
         }
         enqueueOperation(conn, "read $characteristicUuid") { gatt ->
             val char = conn.characteristicMap[charKey(serviceUuid, characteristicUuid)] ?: run {
-                callback?.onError(address, "read", "Characteristic not found: $characteristicUuid")
+                dispatch { onError(address, "read", "Characteristic not found: $characteristicUuid") }
                 return@enqueueOperation false
             }
             if (char.properties and BluetoothGattCharacteristic.PROPERTY_READ == 0) {
-                callback?.onError(address, "read", "Characteristic not readable: $characteristicUuid")
+                dispatch { onError(address, "read", "Characteristic not readable: $characteristicUuid") }
                 return@enqueueOperation false
             }
             try {
                 @Suppress("DEPRECATION")
                 gatt.readCharacteristic(char)
             } catch (e: SecurityException) {
-                callback?.onError(address, "read", "Security exception: ${e.message}")
+                dispatch { onError(address, "read", "Security exception: ${e.message}") }
                 false
             }
         }
@@ -185,7 +201,7 @@ class BleGattManager(private val context: Context) {
         withResponse: Boolean = true,
     ) {
         val conn = connections[address] ?: run {
-            callback?.onError(address, "write", "Device not connected")
+            dispatch { onError(address, "write", "Device not connected") }
             return
         }
         val writeType = if (withResponse)
@@ -195,7 +211,7 @@ class BleGattManager(private val context: Context) {
 
         enqueueOperation(conn, "write $characteristicUuid") { gatt ->
             val char = conn.characteristicMap[charKey(serviceUuid, characteristicUuid)] ?: run {
-                callback?.onError(address, "write", "Characteristic not found: $characteristicUuid")
+                dispatch { onError(address, "write", "Characteristic not found: $characteristicUuid") }
                 return@enqueueOperation false
             }
             val requiredProp = if (withResponse)
@@ -203,7 +219,7 @@ class BleGattManager(private val context: Context) {
             else
                 BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
             if (char.properties and requiredProp == 0) {
-                callback?.onError(address, "write", "Characteristic does not support this write type")
+                dispatch { onError(address, "write", "Characteristic does not support this write type") }
                 return@enqueueOperation false
             }
             try {
@@ -218,7 +234,7 @@ class BleGattManager(private val context: Context) {
                     gatt.writeCharacteristic(char)
                 }
             } catch (e: SecurityException) {
-                callback?.onError(address, "write", "Security exception: ${e.message}")
+                dispatch { onError(address, "write", "Security exception: ${e.message}") }
                 false
             }
         }
@@ -231,20 +247,20 @@ class BleGattManager(private val context: Context) {
         enable: Boolean,
     ) {
         val conn = connections[address] ?: run {
-            callback?.onError(address, "notify", "Device not connected")
+            dispatch { onError(address, "notify", "Device not connected") }
             return
         }
         val opName = if (enable) "subscribe" else "unsubscribe"
 
         enqueueOperation(conn, "$opName $characteristicUuid") { gatt ->
             val char = conn.characteristicMap[charKey(serviceUuid, characteristicUuid)] ?: run {
-                callback?.onError(address, opName, "Characteristic not found: $characteristicUuid")
+                dispatch { onError(address, opName, "Characteristic not found: $characteristicUuid") }
                 return@enqueueOperation false
             }
             val hasNotify   = char.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY   != 0
             val hasIndicate = char.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
             if (!hasNotify && !hasIndicate) {
-                callback?.onError(address, opName, "Characteristic does not support notifications")
+                dispatch { onError(address, opName, "Characteristic does not support notifications") }
                 return@enqueueOperation false
             }
 
@@ -272,7 +288,7 @@ class BleGattManager(private val context: Context) {
                     gatt.writeDescriptor(descriptor)
                 }
             } catch (e: SecurityException) {
-                callback?.onError(address, opName, "Security exception: ${e.message}")
+                dispatch { onError(address, opName, "Security exception: ${e.message}") }
                 false
             }
         }
@@ -304,13 +320,13 @@ class BleGattManager(private val context: Context) {
                         startTimeout(conn, "discoverServices") {
                             Timber.w("BleGatt discoverServices($address): timeout")
                             handleDisconnect(address)
-                            callback?.onError(address, "discover", "Service discovery timeout")
+                            dispatch { onError(address, "discover", "Service discovery timeout") }
                         }
                         gatt.discoverServices()
                     } catch (e: SecurityException) {
                         Timber.e("BleGatt discoverServices($address): SecurityException")
                         handleDisconnect(address)
-                        callback?.onError(address, "discover", "Security exception")
+                        dispatch { onError(address, "discover", "Security exception") }
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -318,10 +334,10 @@ class BleGattManager(private val context: Context) {
                     val wasConnected = conn.connected
                     handleDisconnect(address)
                     if (wasConnected) {
-                        callback?.onDisconnected(address)
+                        dispatch { onDisconnected(address) }
                     } else {
                         // Failed before fully connecting
-                        callback?.onError(address, "connect", "Connection failed: GATT status $status")
+                        dispatch { onError(address, "connect", "Connection failed: GATT status $status") }
                     }
                 }
             }
@@ -334,7 +350,7 @@ class BleGattManager(private val context: Context) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Timber.e("BleGatt onServicesDiscovered($address): failed status=$status")
                 handleDisconnect(address)
-                callback?.onError(address, "discover", "Service discovery failed: status $status")
+                dispatch { onError(address, "discover", "Service discovery failed: status $status") }
                 return
             }
 
@@ -346,7 +362,7 @@ class BleGattManager(private val context: Context) {
                 BleGattServiceInfo(uuid = service.uuid.toString(), characteristics = charInfoList)
             }
             Timber.i("BleGatt services discovered($address): ${serviceInfoList.size} service(s)")
-            callback?.onConnected(address, serviceInfoList)
+            dispatch { onConnected(address, serviceInfoList) }
         }
 
         // API < 33 path
@@ -359,14 +375,9 @@ class BleGattManager(private val context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return // handled by the new override
             val conn = connections[address] ?: return
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                callback?.onReadResult(
-                    address,
-                    characteristic.service.uuid.toString(),
-                    characteristic.uuid.toString(),
-                    characteristic.value ?: ByteArray(0),
-                )
+                dispatch { onReadResult(address, characteristic.service.uuid.toString(), characteristic.uuid.toString(), characteristic.value ?: ByteArray(0)) }
             } else {
-                callback?.onError(address, "read", "Read failed: status $status")
+                dispatch { onError(address, "read", "Read failed: status $status") }
             }
             processNextOperation(conn)
         }
@@ -381,14 +392,9 @@ class BleGattManager(private val context: Context) {
         ) {
             val conn = connections[address] ?: return
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                callback?.onReadResult(
-                    address,
-                    characteristic.service.uuid.toString(),
-                    characteristic.uuid.toString(),
-                    value,
-                )
+                dispatch { onReadResult(address, characteristic.service.uuid.toString(), characteristic.uuid.toString(), value) }
             } else {
-                callback?.onError(address, "read", "Read failed: status $status")
+                dispatch { onError(address, "read", "Read failed: status $status") }
             }
             processNextOperation(conn)
         }
@@ -402,12 +408,7 @@ class BleGattManager(private val context: Context) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Timber.w("BleGatt write($address/${characteristic.uuid}): failed status=$status")
             }
-            callback?.onWriteResult(
-                address,
-                characteristic.service.uuid.toString(),
-                characteristic.uuid.toString(),
-                status == BluetoothGatt.GATT_SUCCESS,
-            )
+            dispatch { onWriteResult(address, characteristic.service.uuid.toString(), characteristic.uuid.toString(), status == BluetoothGatt.GATT_SUCCESS) }
             processNextOperation(conn)
         }
 
@@ -418,12 +419,7 @@ class BleGattManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
         ) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
-            callback?.onNotification(
-                address,
-                characteristic.service.uuid.toString(),
-                characteristic.uuid.toString(),
-                characteristic.value ?: ByteArray(0),
-            )
+            dispatch { onNotification(address, characteristic.service.uuid.toString(), characteristic.uuid.toString(), characteristic.value ?: ByteArray(0)) }
         }
 
         // API 33+ path
@@ -433,12 +429,7 @@ class BleGattManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
-            callback?.onNotification(
-                address,
-                characteristic.service.uuid.toString(),
-                characteristic.uuid.toString(),
-                value,
-            )
+            dispatch { onNotification(address, characteristic.service.uuid.toString(), characteristic.uuid.toString(), value) }
         }
 
         override fun onDescriptorWrite(

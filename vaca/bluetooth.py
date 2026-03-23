@@ -527,12 +527,13 @@ class VacaBleakClient(BaseBleakClient):
         """Subscribe to characteristic notifications."""
         svc_uuid, char_uuid = self._resolve_char(char_specifier)
 
-        # Resolve the integer handle so we can pass it to the bleak callback signature
+        # Pass the characteristic object (new bleak API) so integrations can
+        # access .uuid / .handle / .properties on the sender argument.
         char_obj = self.services.get_characteristic(char_uuid)
-        char_handle = char_obj.handle if char_obj is not None else 0
 
         def _notify_wrapper(data: bytearray) -> None:
-            callback(char_handle, data)
+            # char_obj is our _FakeGATTChar which has .uuid / .handle / .properties
+            callback(char_obj, data)
 
         self._proxy.register_notify_callback(self._address, char_uuid, _notify_wrapper)
         self._proxy.async_subscribe_notification(
