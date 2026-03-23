@@ -79,6 +79,7 @@ def _build_service_collection(services_data: list[dict]) -> BleakGATTServiceColl
     for svc_data in services_data:
         svc = _FakeGATTService(svc_data.get("uuid", ""), handle)
         handle += 1
+        coll.add_service(svc)  # Must be added BEFORE its characteristics
         for char_data in svc_data.get("characteristics", []):
             char = _FakeGATTChar(
                 uuid=char_data.get("uuid", ""),
@@ -88,9 +89,7 @@ def _build_service_collection(services_data: list[dict]) -> BleakGATTServiceColl
                 properties=char_data.get("properties", 0),
             )
             handle += 1
-            svc.characteristics.append(char)
-            coll.add_characteristic(char)
-        coll.add_service(svc)
+            coll.add_characteristic(char)  # Appends to svc.characteristics internally
     return coll
 
 
@@ -463,7 +462,10 @@ class VacaBleakClient(BaseBleakClient):
             return False
 
         self._is_connected = True
-        self.services = _build_service_collection(result.get("services", []))
+        try:
+            self.services = _build_service_collection(result.get("services", []))
+        except Exception as ex:  # noqa: BLE001
+            _LOGGER.warning("VacaBleakClient: failed to build service collection for %s: %s", self._address, ex)
         return True
 
     async def disconnect(self) -> bool:
