@@ -149,10 +149,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Set up BLE scanner and GATT proxy if satellite
     if service.info.satellite is not None:
-        ble_scanner, ble_unload = await async_connect_ble_scanner(hass, entry)
-        hass.data.setdefault(f"{DOMAIN}_ble", {})[entry.entry_id] = ble_scanner
-        entry.async_on_unload(ble_unload)
-
+        # Proxy must be created first so the scanner's connector can reference it
         gatt_proxy = VacaBleGattProxy(hass, entry.entry_id)
         hass.data.setdefault(f"{DOMAIN}_gatt", {})[entry.entry_id] = gatt_proxy
 
@@ -160,6 +157,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data.get(f"{DOMAIN}_gatt", {}).pop(entry.entry_id, None)
 
         entry.async_on_unload(_unload_gatt_proxy)
+
+        ble_scanner, ble_unload = await async_connect_ble_scanner(hass, entry, gatt_proxy)
+        hass.data.setdefault(f"{DOMAIN}_ble", {})[entry.entry_id] = ble_scanner
+        entry.async_on_unload(ble_unload)
 
     if (satellite_info := service.info.satellite) is not None:
         # Create satellite device
