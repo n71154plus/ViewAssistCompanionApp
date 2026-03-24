@@ -32,6 +32,7 @@ BLE_READ_RESULT_EVENT_TYPE = "ble_read_result"
 BLE_WRITE_RESULT_EVENT_TYPE = "ble_write_result"
 BLE_NOTIFY_EVENT_TYPE = "ble_notify"
 BLE_ERROR_EVENT_TYPE = "ble_error"
+BLE_CONNECTIONS_UPDATE_EVENT_TYPE = "ble_connections_update"
 
 # BLE GATT — outgoing (HA → Android)
 BLE_CONNECT_EVENT_TYPE = "ble_connect"
@@ -104,9 +105,20 @@ class CustomEvent(Eventable):
     @staticmethod
     def from_event(event: Event) -> "CustomEvent":
         """Create a CustomEvent instance from an event."""
+        event_type = event.data.get("event_type", "unknown")
+        # Support both payload formats:
+        # - Legacy: {"event_type": "...", "data": {...}}
+        # - Current: {"event_type": "...", ...flattened payload...}
+        payload = event.data.get("data")
+        if payload is None:
+            payload = {
+                key: value
+                for key, value in event.data.items()
+                if key != "event_type"
+            }
         return CustomEvent(
-            event_type=event.data.get("event_type", "unknown"),
-            event_data=event.data.get("data"),
+            event_type=event_type,
+            event_data=payload,
         )
 
 

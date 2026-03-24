@@ -38,6 +38,7 @@ from .custom import (
     ACTION_EVENT_TYPE,
     BLE_ADVERTISEMENT_EVENT_TYPE,
     BLE_CONNECT_RESULT_EVENT_TYPE,
+    BLE_CONNECTIONS_UPDATE_EVENT_TYPE,
     BLE_DISCONNECTED_EVENT_TYPE,
     BLE_ERROR_EVENT_TYPE,
     BLE_NOTIFY_EVENT_TYPE,
@@ -129,14 +130,19 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
             _RECONNECT_SECONDS,
         )
         # Clear BLE proxy send callback so can_connect() returns False while disconnected
+        # Also reset slot state so stale counts don't mislead HA after reconnect
         gatt_proxy = self.hass.data.get(f"{DOMAIN}_gatt", {}).get(self.config_entry.entry_id)
         if gatt_proxy is not None:
             gatt_proxy.set_send_callback(None)
+            gatt_proxy._connections_free = 0
+            gatt_proxy._connections_limit = 0
+            gatt_proxy._allocated = []
+            gatt_proxy._free_slot_event.clear()
         # Mark scanner as not scanning
         ble_scanner = self.hass.data.get(f"{DOMAIN}_ble", {}).get(self.config_entry.entry_id)
         if ble_scanner is not None:
             try:
-                ble_scanner._scanning = False
+                ble_scanner.scanning = False
             except (AttributeError, TypeError):
                 pass
         await asyncio.sleep(_RESTART_SECONDS)
@@ -210,6 +216,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
 
             elif evt.event_type in (
                 BLE_CONNECT_RESULT_EVENT_TYPE,
+                BLE_CONNECTIONS_UPDATE_EVENT_TYPE,
                 BLE_DISCONNECTED_EVENT_TYPE,
                 BLE_READ_RESULT_EVENT_TYPE,
                 BLE_WRITE_RESULT_EVENT_TYPE,
@@ -275,7 +282,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         ble_scanner = self.hass.data.get(f"{DOMAIN}_ble", {}).get(self.config_entry.entry_id)
         if ble_scanner is not None:
             try:
-                ble_scanner._scanning = True
+                ble_scanner.scanning = True
             except (AttributeError, TypeError):
                 pass
 

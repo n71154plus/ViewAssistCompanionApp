@@ -195,6 +195,8 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
         config.isRunning = satelliteStatus == SatelliteState.RUNNING
         if (satelliteStatus == SatelliteState.RUNNING) {
             server.bleGattManager?.callback = this
+            // Send initial connection-slot state so HA knows capacity immediately
+            server.bleGattManager?.broadcastCurrentState()
         }
     }
 
@@ -937,10 +939,11 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
 
     // ── BleGattCallback implementation ────────────────────────────────────────
 
-    override fun onConnected(address: String, services: List<BleGattServiceInfo>) {
+    override fun onConnected(address: String, mtu: Int, services: List<BleGattServiceInfo>) {
         sendCustomEvent("ble_connect_result", buildJsonObject {
             put("address", address)
             put("success", true)
+            put("mtu", mtu)
             putJsonArray("services") {
                 services.forEach { service ->
                     add(buildJsonObject {
@@ -1009,6 +1012,15 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
 
     override fun onError(address: String, operation: String, message: String) {
         sendBleError(address, operation, message)
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    override fun onConnectionsUpdated(free: Int, limit: Int, allocated: List<String>) {
+        sendCustomEvent("ble_connections_update", buildJsonObject {
+            put("free", free)
+            put("limit", limit)
+            putJsonArray("allocated") { addAll(allocated) }
+        })
     }
 
     private fun sendBleError(address: String, operation: String, message: String) {

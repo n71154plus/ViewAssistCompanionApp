@@ -2,6 +2,7 @@ package com.msp1974.vacompanion.utils
 
 import android.app.NotificationManager
 import android.app.usage.UsageStatsManager
+import android.bluetooth.BluetoothManager
 import android.content.pm.ApplicationInfo
 import android.content.Context
 import android.content.Context.NOTIFICATION_SERVICE
@@ -50,6 +51,7 @@ data class DeviceCapabilitiesData(
     val sensors: List<JsonObject>,
     val audioInfo: JsonObject,
     val installedApps: List<InstalledAppInfo>,
+    val bluetoothAdapterAddress: String? = null,
 )
 
 
@@ -72,7 +74,26 @@ class DeviceCapabilitiesManager(val context: Context) {
             sensors = getAvailableSensors(),
             audioInfo = getAudioInfo(),
             installedApps = getInstalledApps(),
+            bluetoothAdapterAddress = getBluetoothAdapterAddress(),
         )
+    }
+
+    fun getBluetoothAdapterAddress(): String? {
+        return try {
+            val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            val address = manager?.adapter?.address?.uppercase() ?: return null
+            if (address == "02:00:00:00:00:00") {
+                return null
+            }
+            if (!Regex("^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$").matches(address)) {
+                return null
+            }
+            address
+        } catch (_: SecurityException) {
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun getProximitySensorType(): String {
@@ -220,6 +241,9 @@ class DeviceCapabilitiesManager(val context: Context) {
                     put("has_front_camera", data.hasFrontCamera)
                     put("has_dnd", data.hasDND)
                     put("proximity_sensor_type", data.proximitySensorType)
+                    data.bluetoothAdapterAddress?.let {
+                        put("bluetooth_adapter_address", it)
+                    }
                     putJsonObject("audio") {
                         put("max_music_volume", data.audioInfo.getValue("maxMusicVolume"))
                         put("max_notification_volume", data.audioInfo.getValue("maxNotificationVolume"))
@@ -268,6 +292,9 @@ class DeviceCapabilitiesManager(val context: Context) {
                     put("has_front_camera", data.hasFrontCamera)
                     put("has_dnd", data.hasDND)
                     put("proximity_sensor_type", data.proximitySensorType)
+                    data.bluetoothAdapterAddress?.let {
+                        put("bluetooth_adapter_address", it)
+                    }
                     putJsonObject("audio") {
                         put("max_music_volume", data.audioInfo.getValue("maxMusicVolume"))
                         put("max_notification_volume", data.audioInfo.getValue("maxNotificationVolume"))

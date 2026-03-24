@@ -76,7 +76,10 @@ class BaseNumberEntity(VASatelliteEntity, RestoreNumber):
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
@@ -256,7 +259,10 @@ class WyomingSatelliteScreenBrightnessNumber(VASatelliteEntity, RestoreNumber):
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
@@ -286,7 +292,10 @@ class WyomingSatelliteWakeWordThresholdNumber(VASatelliteEntity, RestoreNumber):
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
@@ -317,7 +326,10 @@ class WyomingSatelliteZoomLevelNumber(VASatelliteEntity, RestoreNumber):
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
@@ -352,7 +364,10 @@ class WyomingSatelliteMotionDetectionSensitivityNumber(
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
@@ -384,7 +399,10 @@ class WyomingSatelliteBumpDetectionSensitivityNumber(VASatelliteEntity, RestoreN
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
@@ -415,7 +433,10 @@ class WyomingSatelliteRawProximityThresholdNumber(VASatelliteEntity, RestoreNumb
 
         state = await self.async_get_last_state()
         if state is not None:
-            await self.async_set_native_value(float(state.state))
+            try:
+                await self.async_set_native_value(float(state.state))
+            except (ValueError, TypeError):
+                pass
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""

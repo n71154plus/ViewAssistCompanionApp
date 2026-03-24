@@ -342,6 +342,14 @@ class APPConfig(val context: Context) {
             eventBroadcaster.notifyEvent(Event("bleUuidFilter", bleUuidFilter, value))
         }
 
+    var bleMaxConnections: Int
+        get() = this.sharedPrefs.getInt("ble_max_connections", BLE_DEFAULT_MAX_CONNECTIONS)
+        set(value) {
+            val clamped = value.coerceIn(1, 10)
+            this.sharedPrefs.edit { putInt("ble_max_connections", clamped) }
+            eventBroadcaster.notifyEvent(Event("bleMaxConnections", bleMaxConnections, clamped))
+        }
+
     var recentAppsCount: Int
         get() = this.sharedPrefs.getInt("recent_apps_count", 10)
         set(value) {
@@ -507,6 +515,9 @@ class APPConfig(val context: Context) {
         if (settings.has("ble_uuid_filter")) {
             bleUuidFilter = settings.getString("ble_uuid_filter")
         }
+        if (settings.has("ble_max_connections")) {
+            bleMaxConnections = settings.getInt("ble_max_connections")
+        }
         if (settings.has("recent_apps_count")) {
             recentAppsCount = settings.getInt("recent_apps_count")
         }
@@ -577,6 +588,7 @@ class APPConfig(val context: Context) {
         const val BLE_BATCH_INTERVAL_MS = 500L
         const val BLE_DEFAULT_RSSI_THRESHOLD = -100
         const val BLE_DEFAULT_SCAN_MODE = 2
+        const val BLE_DEFAULT_MAX_CONNECTIONS = 5
 
         @Volatile
         private var instance: APPConfig? = null

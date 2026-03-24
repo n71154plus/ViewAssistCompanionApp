@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.PowerManager
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
+import com.msp1974.vacompanion.settings.APPConfig
 import timber.log.Timber
 import java.util.LinkedList
 import java.util.Timer
@@ -27,7 +28,6 @@ private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b3
 
 private const val CONNECT_TIMEOUT_MS   = 10_000L
 private const val OPERATION_TIMEOUT_MS =  5_000L
-private const val MAX_CONNECTIONS      = 5
 
 // ── Public data models ─────────────────────────────────────────────────────────
 
@@ -44,12 +44,14 @@ data class BleGattServiceInfo(
 // ── Callback interface ─────────────────────────────────────────────────────────
 
 interface BleGattCallback {
-    fun onConnected(address: String, services: List<BleGattServiceInfo>)
+    fun onConnected(address: String, mtu: Int, services: List<BleGattServiceInfo>)
     fun onDisconnected(address: String)
     fun onReadResult(address: String, serviceUuid: String, characteristicUuid: String, value: ByteArray)
     fun onWriteResult(address: String, serviceUuid: String, characteristicUuid: String, success: Boolean)
     fun onNotification(address: String, serviceUuid: String, characteristicUuid: String, value: ByteArray)
     fun onError(address: String, operation: String, message: String)
+    /** Called after every connect or disconnect with the current slot state. Default no-op. */
+    fun onConnectionsUpdated(free: Int, limit: Int, allocated: List<String>) {}
 }
 
 // ── Internal types ─────────────────────────────────────────────────────────────
@@ -69,6 +71,9 @@ private class DeviceConnection(val address: String) {
     // "serviceUuid/charUuid" → characteristic instance for fast lookup
     val characteristicMap: MutableMap<String, BluetoothGattCharacteristic> = mutableMapOf()
     var timeoutTimer: Timer? = null
+    // MTU negotiation: services are held here until onMtuChanged fires
+    var mtu: Int = 23
+    var pendingServices: List<BleGattServiceInfo>? = null
 }
 
 // ── BleGattManager ─────────────────────────────────────────────────────────────
@@ -77,6 +82,8 @@ class BleGattManager(private val context: Context) {
 
     private val connections = ConcurrentHashMap<String, DeviceConnection>()
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private val config = APPConfig.getInstance(context)
 
     // Multi-listener support: all registered callbacks receive every event
     private val callbackList = java.util.concurrent.CopyOnWriteArrayList<BleGattCallback>()
@@ -95,6 +102,17 @@ class BleGattManager(private val context: Context) {
     fun removeCallback(cb: BleGattCallback) { callbackList.remove(cb) }
     private fun dispatch(action: BleGattCallback.() -> Unit) { callbackList.forEach { it.action() } }
 
+    /** Broadcast current slot state to all callbacks. */
+    private fun dispatchConnectionsUpdated() {
+        val limit = config.bleMaxConnections
+        val allocated = connections.keys.toList()
+        val free = (limit - allocated.size).coerceAtLeast(0)
+        dispatch { onConnectionsUpdated(free, limit, allocated) }
+    }
+
+    /** Trigger an immediate connections-state broadcast (call after registering a callback). */
+    fun broadcastCurrentState() = dispatchConnectionsUpdated()
+
     // ── Public API ─────────────────────────────────────────────────────────────
 
     fun connect(address: String) {
@@ -107,9 +125,10 @@ class BleGattManager(private val context: Context) {
             Timber.d("BleGatt connect($address): already connected or connecting")
             return
         }
-        if (connections.size >= MAX_CONNECTIONS) {
-            Timber.w("BleGatt connect($address): max connections ($MAX_CONNECTIONS) reached")
-            dispatch { onError(address, "connect", "Max connections ($MAX_CONNECTIONS) reached") }
+        val maxConnections = config.bleMaxConnections
+        if (connections.size >= maxConnections) {
+            Timber.w("BleGatt connect($address): max connections ($maxConnections) reached")
+            dispatch { onError(address, "connect", "Max connections ($maxConnections) reached") }
             return
         }
 
@@ -362,11 +381,56 @@ class BleGattManager(private val context: Context) {
                 BleGattServiceInfo(uuid = service.uuid.toString(), characteristics = charInfoList)
             }
             Timber.i("BleGatt services discovered($address): ${serviceInfoList.size} service(s)")
-            dispatch { onConnected(address, serviceInfoList) }
+
+            // Hold services and request MTU negotiation before reporting onConnected.
+            // HA uses the MTU to size BleakGATTCharacteristic.max_write_without_response.
+            conn.pendingServices = serviceInfoList
+            try {
+                startTimeout(conn, "mtu") {
+                    // MTU timeout — fire onConnected with the default MTU
+                    Timber.w("BleGatt MTU request timeout for $address, using default MTU ${conn.mtu}")
+                    val services = conn.pendingServices ?: return@startTimeout
+                    conn.pendingServices = null
+                    dispatch { onConnected(address, conn.mtu, services) }
+                    dispatchConnectionsUpdated()
+                }
+                val requested = gatt.requestMtu(512)
+                if (!requested) {
+                    // requestMtu returned false immediately — fire without MTU negotiation
+                    cancelTimeout(conn)
+                    Timber.w("BleGatt requestMtu($address) returned false, using default MTU ${conn.mtu}")
+                    conn.pendingServices = null
+                    dispatch { onConnected(address, conn.mtu, serviceInfoList) }
+                    dispatchConnectionsUpdated()
+                }
+            } catch (e: SecurityException) {
+                cancelTimeout(conn)
+                Timber.e("BleGatt requestMtu($address): SecurityException — ${e.message}")
+                conn.pendingServices = null
+                dispatch { onConnected(address, conn.mtu, serviceInfoList) }
+                dispatchConnectionsUpdated()
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            val conn = connections[address] ?: return
+            cancelTimeout(conn)
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                conn.mtu = mtu
+                Timber.i("BleGatt MTU negotiated for $address: $mtu bytes")
+            } else {
+                Timber.w("BleGatt MTU negotiation failed for $address (status=$status), using ${conn.mtu}")
+            }
+
+            val services = conn.pendingServices ?: return
+            conn.pendingServices = null
+            dispatch { onConnected(address, conn.mtu, services) }
+            dispatchConnectionsUpdated()
         }
 
         // API < 33 path
-        @Suppress("DEPRECATION")
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
         override fun onCharacteristicRead(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
@@ -413,7 +477,7 @@ class BleGattManager(private val context: Context) {
         }
 
         // API < 33 path
-        @Suppress("DEPRECATION")
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
@@ -499,6 +563,8 @@ class BleGattManager(private val context: Context) {
         if (connections.isEmpty()) {
             releaseWakeLock()
         }
+        // Notify listeners that a slot has been freed
+        dispatchConnectionsUpdated()
     }
 
     private fun acquireWakeLockIfNeeded() {

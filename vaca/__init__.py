@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from homeassistant.components.wyoming import (
@@ -25,6 +26,7 @@ from .custom import CustomActions, CustomEvent
 from .devices import VASatelliteDevice
 
 _LOGGER = logging.getLogger(__name__)
+_BLUETOOTH_ADDRESS_RE = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
@@ -174,10 +176,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry.async_on_unload(_unload_gatt_proxy)
 
+        # Fetch capabilities early so BLE scanner source can use the real adapter MAC.
+        capabilities = await get_device_capabilities(item)
+        source_override: str | None = None
+        if capabilities and (
+            raw_adapter_address := capabilities.get("bluetooth_adapter_address")
+        ):
+            candidate = str(raw_adapter_address).strip().upper()
+            if _BLUETOOTH_ADDRESS_RE.match(candidate):
+                source_override = candidate
+
         ble_scanner, ble_unload = await async_connect_ble_scanner(
             hass,
             entry,
             gatt_proxy,
+            source_override=source_override,
             source_model=satellite_info.name,
             source_device_id=device.id,
         )
@@ -188,7 +201,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             satellite_id=satellite_id,
             device_id=device.id,
         )
-        item.device.capabilities = await get_device_capabilities(item)
+        item.device.capabilities = capabilities
 
         # Set up satellite entity, sensors, switches, etc.
         await hass.config_entries.async_forward_entry_setups(entry, SATELLITE_PLATFORMS)
