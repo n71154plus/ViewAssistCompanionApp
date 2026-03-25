@@ -133,6 +133,10 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         # Also reset slot state so stale counts don't mislead HA after reconnect
         gatt_proxy = self.hass.data.get(f"{DOMAIN}_gatt", {}).get(self.config_entry.entry_id)
         if gatt_proxy is not None:
+            # First, notify all BleakClient instances that their connections are gone
+            # (so they can attempt reconnection when satellite comes back up)
+            gatt_proxy.trigger_satellite_disconnection()
+            # Then clear the proxy state
             gatt_proxy.set_send_callback(None)
             gatt_proxy._connections_free = 0
             gatt_proxy._connections_limit = 0

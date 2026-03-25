@@ -270,6 +270,28 @@ class VacaBleGattProxy:
         """Unregister callback for BLE connection-slot updates."""
         self._allocations_listeners.discard(listener)
 
+    def trigger_satellite_disconnection(self) -> None:
+        """Trigger ble_disconnected for all allocated devices when satellite goes down.
+
+        When satellite connectivity is lost, the proxy's send callback is cleared,
+        preventing any further BLE events to Android. However, already-connected
+        BLE devices still exist on the Android side. We need to notify local
+        BleakClient instances to disconnect so they can attempt reconnection
+        when satellite comes back up.
+        """
+        # Snapshot of currently allocated addresses (addresses with active connections)
+        addresses = list(self._allocated)
+        _LOGGER.info(
+            "Satellite disconnected: triggering ble_disconnected for %s",
+            addresses,
+        )
+        for addr in addresses:
+            # Process as if Android sent ble_disconnected
+            self.handle_result(
+                BLE_DISCONNECTED_EVENT_TYPE,
+                {"address": addr},
+            )
+
     def _send(self, event_type: str, data: dict[str, Any]) -> None:
         if self._send_callback:
             self._send_callback(event_type, data)
