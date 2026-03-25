@@ -7,7 +7,12 @@
       "Bash(find C:/Python* C:/Program*/Python* -name scanner.py -path */habluetooth/*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(gh api:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.blueupbeacons.com)",
+      "WebFetch(domain:punchthrough.com)",
+      "WebFetch(domain:blog.csdn.net)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
