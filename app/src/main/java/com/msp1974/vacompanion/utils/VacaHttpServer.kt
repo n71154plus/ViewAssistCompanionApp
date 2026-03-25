@@ -565,32 +565,48 @@ class VacaHttpServer(
 
     private fun handleBleGattPage(socket: Socket, address: String) {
         if (address.isBlank()) { sendError(socket, 400, "Missing address"); return }
-        val safeAddr = address.replace("\"", "")
+        val safeAddr = address.replace("\"", "").replace("<", "").replace(">", "")
+        val addrJs = safeAddr.replace(":", "%3A")
         val sb = StringBuilder()
         val css = """
-            table{width:100%;border-collapse:collapse;font-size:13px}
             .svc-card{background:#fff;border-radius:10px;border:1px solid #e0e0e0;margin-bottom:10px;overflow:hidden}
             .svc-header{background:#f5f5f5;padding:8px 12px;font-size:12px;font-weight:600;color:#333;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
             .svc-body{padding:0 12px}
-            .char-row{padding:8px 0;border-bottom:1px solid #f0f0f0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+            .char-row{padding:8px 0;border-bottom:1px solid #f0f0f0}
             .char-row:last-child{border-bottom:none}
-            .char-uuid{font-family:monospace;font-size:11px;color:#555;flex:1;min-width:200px}
+            .char-uuid{font-family:monospace;font-size:11px;color:#555;margin-bottom:3px}
             .prop-badge{font-size:10px;padding:1px 5px;border-radius:8px;background:#e8f5e9;color:#2e7d32}
             .prop-badge.write{background:#fff3e0;color:#e65100}
             .prop-badge.notify{background:#e3f2fd;color:#1565c0}
+            .char-btns{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
             .btn-sm{font-size:11px;padding:3px 8px;border-radius:6px;border:none;cursor:pointer;background:#4caf50;color:#fff}
-            .btn-sm.secondary{background:#555}.btn-sm.danger{background:#f44336}
-            .val-box{font-family:monospace;font-size:11px;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:4px 8px;margin-top:4px;word-break:break-all;width:100%}
+            .btn-sm.secondary{background:#555}
+            .btn-sm.danger{background:#f44336}
+            .btn-sm.notify-btn{background:#1565c0}
+            .btn-sm.subbed{background:#7b1fa2}
+            .val-box{font-family:monospace;font-size:11px;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:6px 8px;margin-top:4px;word-break:break-all;width:100%;box-sizing:border-box}
+            .val-line{display:block;color:#333;margin-bottom:2px}
+            .val-label{color:#999;font-size:10px;margin-right:4px;display:inline-block;min-width:54px}
+            .notify-hist{margin-top:4px;font-family:monospace;font-size:10px;background:#1a1a2e;border-radius:6px;padding:4px 8px;max-height:120px;overflow-y:auto;display:none}
+            .notify-hist-entry{color:#aef;border-bottom:1px solid #333;padding:2px 0}
+            .notify-hist-time{color:#888;margin-right:6px}
+            .adv-panel{background:#e8f4fd;border:1px solid #b3d9f7;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;display:none}
+            .adv-panel h3{margin:0 0 6px;font-size:12px;color:#1565c0}
+            .adv-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+            .adv-label{color:#888;min-width:90px;font-size:11px}
+            .adv-val{font-family:monospace;color:#333;word-break:break-all;font-size:11px}
             .status-bar{font-size:12px;padding:6px 12px;border-radius:8px;margin-bottom:12px;display:inline-block}
             .status-connected{background:#e8f5e9;color:#2e7d32}
             .status-disconnected{background:#ffebee;color:#c62828}
             .status-connecting{background:#fff8e1;color:#f57f17}
-            #event-log{font-family:monospace;font-size:11px;background:#111;color:#eee;border-radius:8px;padding:8px;height:180px;overflow-y:auto;margin-top:10px;white-space:pre-wrap;word-break:break-all}
+            .status-failed{background:#fce4ec;color:#880e4f}
+            #event-log{font-family:monospace;font-size:11px;background:#111;color:#eee;border-radius:8px;padding:8px;height:160px;overflow-y:auto;margin-top:10px;white-space:pre-wrap;word-break:break-all}
         """.trimIndent().replace("\n", "")
         sb.append(htmlHead("BLE Explorer", css))
-        sb.append("<a class=\"back\" href=\"/ble\">← Back</a>")
+        sb.append("<a class=\"back\" href=\"/ble\">\u2190 Back</a>")
         sb.append("<h1 style=\"font-size:1.1rem;margin:.5rem 0\">&#x1F4E1; BLE Explorer</h1>")
         sb.append("<div style=\"font-family:monospace;font-size:12px;color:#555;margin-bottom:8px\">$safeAddr</div>")
+        sb.append("<div class=\"adv-panel\" id=\"adv-panel\"></div>")
         sb.append("<div id=\"status\" class=\"status-bar status-disconnected\">Disconnected</div>")
         sb.append("<div style=\"display:flex;gap:8px;margin-bottom:12px\">")
         sb.append("<button class=\"btn-sm\" id=\"btnConnect\" onclick=\"doConnect()\">Connect</button>")
@@ -600,21 +616,30 @@ class VacaHttpServer(
         sb.append("<h2 style=\"font-size:.95rem;color:#555;margin:.8rem 0 .3rem\">&#x1F4CB; Log</h2>")
         sb.append("<div id=\"event-log\"></div>")
         sb.append("""<script>
-var ADDR=decodeURIComponent("${safeAddr.replace(":", "%3A")}");
+var ADDR=decodeURIComponent("$addrJs");
 var since=0,connected=false,services=[];
+var subscribedChars={};
+var notifyHistory={};
 var propNames={1:'BROADCAST',2:'READ',4:'WRITE_NR',8:'WRITE',16:'NOTIFY',32:'INDICATE',64:'AUTH_WRITE',128:'EXT_PROP'};
 function propBadges(p){var s='';for(var k in propNames){if(p&k)s+='<span class="prop-badge'+(p&(8|4)?' write':'')+(p&(16|32)?' notify':'')+'">'+propNames[k]+'</span> ';}return s;}
 function log(msg){var el=document.getElementById('event-log');el.textContent+=new Date().toLocaleTimeString()+' '+msg+'\n';el.scrollTop=el.scrollHeight;}
-function setStatus(st){var el=document.getElementById('status');el.textContent=st;el.className='status-bar '+(st==='Connected'?'status-connected':st==='Connecting...'?'status-connecting':'status-disconnected');connected=(st==='Connected');document.getElementById('btnConnect').style.display=connected?'none':'inline-block';document.getElementById('btnDisc').style.display=connected?'inline-block':'none';}
-function doConnect(){setStatus('Connecting...');fetch('/ble/connect?address='+encodeURIComponent(ADDR),{method:'POST'}).then(function(r){if(!r.ok){setStatus('Disconnected');log('Connect error: HTTP '+r.status+' (is BLE proxy enabled?)');}}).catch(function(e){setStatus('Disconnected');log('Connect error: '+e);});}
+function setStatus(st,cls){var el=document.getElementById('status');el.textContent=st;el.className='status-bar '+(cls||(st==='Connected'?'status-connected':st.indexOf('Connecting')===0?'status-connecting':'status-disconnected'));connected=(st==='Connected');document.getElementById('btnConnect').style.display=connected?'none':'inline-block';document.getElementById('btnDisc').style.display=connected?'inline-block':'none';}
+function parseHex(s){return s.replace(/\s+/g,'').replace(/[^0-9a-fA-F]/g,'');}
+function hexToFormats(hex){var sp=hex.match(/.{1,2}/g)||[];var by=sp.map(function(h){return parseInt(h,16);});var utf=by.map(function(b){return(b>=32&&b<=126)?String.fromCharCode(b):'.';}).join('');var u16=by.length>=2?(by[0]|(by[1]<<8)):null;var u32=by.length>=4?((by[0]|(by[1]<<8)|(by[2]<<16)|(by[3]<<24))>>>0):null;return{spaced:sp.join(' '),decimal:by.join(' '),utf8:utf,len:by.length,u16le:u16,u32le:u32};}
+function renderValBox(id,hex,ascii){var el=document.getElementById(id);if(!el||!hex)return;var f=hexToFormats(hex);var h='<span class="val-line"><span class="val-label">HEX</span>'+f.spaced+'</span>';h+='<span class="val-line"><span class="val-label">STR</span>'+ascii+'</span>';h+='<span class="val-line"><span class="val-label">DEC</span>['+f.decimal+']</span>';if(f.u16le!==null)h+='<span class="val-line"><span class="val-label">uint16LE</span>'+f.u16le+'</span>';if(f.u32le!==null)h+='<span class="val-line"><span class="val-label">uint32LE</span>'+f.u32le+'</span>';h+='<span class="val-line"><span class="val-label">LEN</span>'+f.len+' bytes</span>';el.innerHTML=h;}
+function addNotifyHistory(charUuid,hex,ascii,ts){if(!hex)return;if(!notifyHistory[charUuid])notifyHistory[charUuid]=[];var hist=notifyHistory[charUuid];var dt=new Date(ts);var tm=dt.getHours().toString().padStart(2,'0')+':'+dt.getMinutes().toString().padStart(2,'0')+':'+dt.getSeconds().toString().padStart(2,'0')+'.'+dt.getMilliseconds().toString().padStart(3,'0');hist.unshift({hex:hex,ascii:ascii,tm:tm});if(hist.length>20)hist.pop();var hid='hist_'+charUuid.replace(/-/g,'_');var el=document.getElementById(hid);if(el)el.innerHTML=hist.map(function(e){return'<div class="notify-hist-entry"><span class="notify-hist-time">'+e.tm+'</span>'+e.hex+' ('+e.ascii+')</div>';}).join('');}
+function toggleHistory(charUuid){var el=document.getElementById('hist_'+charUuid.replace(/-/g,'_'));if(el)el.style.display=el.style.display==='block'?'none':'block';}
+function renderServices(svcs){services=svcs;var el=document.getElementById('services');if(!svcs||!svcs.length){el.innerHTML='<div style="color:#aaa;font-size:13px">No services</div>';return;}var h='';svcs.forEach(function(svc,si){h+='<div class="svc-card"><div class="svc-header" onclick="toggleSvc('+si+')"><span>'+svc.uuid+'</span><span id="arrow'+si+'">&#9660;</span></div><div class="svc-body" id="svcbody'+si+'">';svc.chars.forEach(function(ch){var hasRead=ch.props&2,hasWrite=ch.props&(4|8),hasNotify=ch.props&(16|32);var vid='val_'+ch.uuid.replace(/-/g,'_');var hid='hist_'+ch.uuid.replace(/-/g,'_');var isSub=!!subscribedChars[ch.uuid];h+='<div class="char-row"><div class="char-uuid">'+ch.uuid+'</div><div>'+propBadges(ch.props)+'</div><div class="char-btns">';if(hasRead)h+='<button class="btn-sm" onclick="doRead(\''+svc.uuid+'\',\''+ch.uuid+'\')">Read</button>';if(hasWrite)h+='<button class="btn-sm secondary" onclick="doWrite(\''+svc.uuid+'\',\''+ch.uuid+'\')">Write</button>';if(hasNotify){h+='<button class="btn-sm '+(isSub?'subbed':'notify-btn')+'" id="subbtn_'+ch.uuid.replace(/-/g,'_')+'" data-sub="'+(isSub?'1':'0')+'" onclick="doNotify(\''+svc.uuid+'\',\''+ch.uuid+'\',this)">'+(isSub?'Unsubscribe':'Subscribe')+'</button>';h+='<button class="btn-sm secondary" onclick="toggleHistory(\''+ch.uuid+'\')">History</button>';}h+='</div><div class="val-box" id="'+vid+'"> </div>';if(hasNotify)h+='<div class="notify-hist" id="'+hid+'"></div>';h+='</div>';});h+='</div></div>';});el.innerHTML=h;}
+function toggleSvc(i){var b=document.getElementById('svcbody'+i),a=document.getElementById('arrow'+i);var v=b.style.display==='none';b.style.display=v?'':'none';a.innerHTML=v?'&#9660;':'&#9654;';}
+function doConnect(){setStatus('Connecting...');fetch('/ble/connect?address='+encodeURIComponent(ADDR),{method:'POST'}).then(function(r){if(!r.ok){setStatus('Connection Failed (HTTP '+r.status+')','status-bar status-failed');log('Connect error: HTTP '+r.status+' (is BLE proxy enabled?)');}}).catch(function(e){setStatus('Connection Failed','status-bar status-failed');log('Connect error: '+e);});}
 function doDisconnect(){fetch('/ble/disconnect?address='+encodeURIComponent(ADDR),{method:'POST'}).catch(function(e){log('Disconnect error: '+e);});}
 function doRead(svc,ch){fetch('/ble/read?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch).catch(function(e){log('Read error: '+e);});}
-function doWrite(svc,ch){var hex=prompt('Enter hex value to write (e.g. 0100):');if(!hex)return;fetch('/ble/write?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch,{method:'POST',headers:{'Content-Type':'text/plain','Content-Length':hex.length.toString()},body:hex}).catch(function(e){log('Write error: '+e);});}
-function doNotify(svc,ch,btn){var enable=btn.dataset.sub!=='1';fetch('/ble/notify?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch+'&enable='+enable,{method:'POST'}).then(function(){btn.textContent=enable?'Unsubscribe':'Subscribe';btn.dataset.sub=enable?'1':'0';log((enable?'Subscribed to ':'Unsubscribed from ')+ch);}).catch(function(e){log('Notify error: '+e);});}
-function renderServices(svcs){services=svcs;var el=document.getElementById('services');if(!svcs||!svcs.length){el.innerHTML='<div style="color:#aaa;font-size:13px">No services</div>';return;}var h='';svcs.forEach(function(svc,si){h+='<div class="svc-card"><div class="svc-header" onclick="toggleSvc('+si+')"><span>'+svc.uuid+'</span><span id="arrow'+si+'">▼</span></div><div class="svc-body" id="svcbody'+si+'">';svc.chars.forEach(function(ch){var hasRead=ch.props&2,hasWrite=ch.props&(4|8),hasNotify=ch.props&(16|32);h+='<div class="char-row"><div class="char-uuid">'+ch.uuid+'<br>'+propBadges(ch.props)+'</div>';if(hasRead)h+='<button class="btn-sm" onclick="doRead(\''+svc.uuid+'\',\''+ch.uuid+'\')">Read</button>';if(hasWrite)h+='<button class="btn-sm secondary" onclick="doWrite(\''+svc.uuid+'\',\''+ch.uuid+'\')">Write</button>';if(hasNotify)h+='<button class="btn-sm notify" data-sub="0" onclick="doNotify(\''+svc.uuid+'\',\''+ch.uuid+'\',this)" style="background:#1565c0">Subscribe</button>';h+='<div class="val-box" id="val_'+ch.uuid.replace(/-/g,\'_\')+'"> </div></div>';});h+='</div></div>';});el.innerHTML=h;}
-function toggleSvc(i){var b=document.getElementById('svcbody'+i),a=document.getElementById('arrow'+i);var v=b.style.display==='none';b.style.display=v?'':'none';a.textContent=v?'▼':'▶';}
-function updateVal(charUuid,hex,ascii){var id='val_'+charUuid.replace(/-/g,'_');var el=document.getElementById(id);if(el)el.textContent='0x'+hex+' ('+ascii+')';}
-function poll(){fetch('/ble/events?address='+encodeURIComponent(ADDR)+'&since='+since).then(function(r){return r.json();}).then(function(d){if(d.events)d.events.forEach(function(e){since=Math.max(since,e.ts);if(e.type==='connected'){setStatus('Connected');renderServices(e.data.services);log('Connected — '+e.data.services.length+' service(s)');}else if(e.type==='disconnected'){setStatus('Disconnected');document.getElementById('services').innerHTML='';log('Disconnected');}else if(e.type==='read'){updateVal(e.data.char,e.data.hex,e.data.ascii);log('Read '+e.data.char+': 0x'+e.data.hex+' ('+e.data.ascii+')');}else if(e.type==='notification'){updateVal(e.data.char,e.data.hex,e.data.ascii);log('Notify '+e.data.char+': 0x'+e.data.hex+' ('+e.data.ascii+')');}else if(e.type==='write'){log('Write '+e.data.char+': '+(e.data.success?'OK':'FAILED'));}else if(e.type==='error'){setStatus('Disconnected');log('Error ['+e.data.op+']: '+e.data.msg);}});if(d.connected&&!connected)setStatus('Connected');else if(!d.connected&&connected)setStatus('Disconnected');}).catch(function(){});setTimeout(poll,600);}
+function doWrite(svc,ch){var input=prompt('Enter hex value to write (space-separated or plain, e.g. 01 FF 0A or 01FF0A):');if(!input)return;var hex=parseHex(input);if(!hex||hex.length%2!==0){alert('Invalid hex: must be even number of hex digits');return;}fetch('/ble/write?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch,{method:'POST',headers:{'Content-Type':'text/plain','Content-Length':hex.length.toString()},body:hex}).catch(function(e){log('Write error: '+e);});}
+function doNotify(svc,ch,btn){var enable=btn.dataset.sub!=='1';fetch('/ble/notify?address='+encodeURIComponent(ADDR)+'&service='+svc+'&char='+ch+'&enable='+enable,{method:'POST'}).then(function(){subscribedChars[ch]=enable;btn.textContent=enable?'Unsubscribe':'Subscribe';btn.className='btn-sm '+(enable?'subbed':'notify-btn');btn.dataset.sub=enable?'1':'0';log((enable?'Subscribed to ':'Unsubscribed from ')+ch);}).catch(function(e){log('Notify error: '+e);});}
+function renderAdvPanel(dev){var el=document.getElementById('adv-panel');if(!el||!dev)return;var h='<h3>&#x1F4E1; Advertisement Data</h3>';h+='<div class="adv-row"><span class="adv-label">RSSI</span><span class="adv-val">'+dev.rssi+' dBm</span></div>';h+='<div class="adv-row"><span class="adv-label">TX Power</span><span class="adv-val">'+(dev.tx_power>-128?dev.tx_power+' dBm':'N/A')+'</span></div>';h+='<div class="adv-row"><span class="adv-label">Last Seen</span><span class="adv-val">'+new Date(dev.last_seen).toLocaleTimeString()+'</span></div>';if(dev.service_uuids&&dev.service_uuids.length)h+='<div class="adv-row"><span class="adv-label">Services</span><span class="adv-val">'+dev.service_uuids.join('<br>')+'</span></div>';if(dev.manufacturer_data){var mfr=Object.keys(dev.manufacturer_data).map(function(k){return'ID '+k+': '+dev.manufacturer_data[k];}).join('<br>');if(mfr)h+='<div class="adv-row"><span class="adv-label">Mfr Data</span><span class="adv-val">'+mfr+'</span></div>';}if(dev.service_data){var sd=Object.keys(dev.service_data).map(function(k){return k+': '+dev.service_data[k];}).join('<br>');if(sd)h+='<div class="adv-row"><span class="adv-label">Svc Data</span><span class="adv-val">'+sd+'</span></div>';}el.innerHTML=h;el.style.display='block';}
+function fetchAdvData(){fetch('/ble/devices').then(function(r){return r.json();}).then(function(d){if(d.devices){var dev=d.devices.find(function(x){return x.address===ADDR;});if(dev)renderAdvPanel(dev);}}).catch(function(){});}
+function poll(){fetch('/ble/events?address='+encodeURIComponent(ADDR)+'&since='+since).then(function(r){return r.json();}).then(function(d){if(d.events)d.events.forEach(function(e){since=Math.max(since,e.ts);if(e.type==='connected'){setStatus('Connected');renderServices(e.data.services);log('Connected \u2014 '+e.data.services.length+' service(s), MTU='+(e.data.mtu||'?'));}else if(e.type==='disconnected'){setStatus('Disconnected');document.getElementById('services').innerHTML='';log('Disconnected');}else if(e.type==='read'){renderValBox('val_'+e.data.char.replace(/-/g,'_'),e.data.hex,e.data.ascii);log('Read '+e.data.char+': 0x'+e.data.hex+' ('+e.data.ascii+')');}else if(e.type==='notification'){renderValBox('val_'+e.data.char.replace(/-/g,'_'),e.data.hex,e.data.ascii);addNotifyHistory(e.data.char,e.data.hex,e.data.ascii,e.ts);log('Notify '+e.data.char+': 0x'+e.data.hex+' ('+e.data.ascii+')');}else if(e.type==='write'){log('Write '+e.data.char+': '+(e.data.success?'OK':'FAILED'));}else if(e.type==='error'){setStatus('Connection Failed: '+e.data.msg,'status-bar status-failed');log('Error ['+e.data.op+']: '+e.data.msg);}});}).catch(function(){});setTimeout(poll,600);}
+fetchAdvData();
 poll();
 </script></body></html>""")
         sendString(socket, sb.toString(), "text/html; charset=utf-8")
@@ -630,7 +655,10 @@ poll();
             sb.append("{\"address\":\"${d.address}\",\"name\":\"$name\",\"rssi\":${d.rssi}")
             sb.append(",\"last_seen\":${d.lastSeen}")
             sb.append(",\"service_uuids\":[${d.serviceUuids.joinToString(",") { "\"${it.jsonEscape()}\"" }}]")
-            sb.append(",\"manufacturer_id\":${d.manufacturerId ?: "null"}}")
+            sb.append(",\"manufacturer_id\":${d.manufacturerId ?: "null"}")
+            sb.append(",\"tx_power\":${d.txPower}")
+            sb.append(",\"manufacturer_data\":{${d.manufacturerData.entries.joinToString(",") { (k, v) -> "\"$k\":\"$v\"" }}}")
+            sb.append(",\"service_data\":{${d.serviceData.entries.joinToString(",") { (k, v) -> "\"${k.jsonEscape()}\":\"$v\"" }}}}")
         }
         sb.append("],\"count\":${devices.size},\"scanning\":${config.bleProxyEnabled}}")
         sendString(socket, sb.toString(), "application/json")

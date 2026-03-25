@@ -29,7 +29,9 @@ class Permissions(val context: Context) {
         const val BLUETOOTH_SCAN = Manifest.permission.BLUETOOTH_SCAN
         @RequiresApi(Build.VERSION_CODES.S)
         const val BLUETOOTH_CONNECT = Manifest.permission.BLUETOOTH_CONNECT
-
+        const val ACCESS_FINE_LOCATION = Manifest.permission.ACCESS_FINE_LOCATION
+        @RequiresApi(Build.VERSION_CODES.Q)
+        const val ACCESS_BACKGROUND_LOCATION = Manifest.permission.ACCESS_BACKGROUND_LOCATION
     }
 
     fun hasCorePermissions(): Boolean {
@@ -56,6 +58,13 @@ class Permissions(val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(BLUETOOTH_SCAN)
             permissions.add(BLUETOOTH_CONNECT)
+        }
+        // ACCESS_FINE_LOCATION is required for BLE scanning on all API levels
+        permissions.add(ACCESS_FINE_LOCATION)
+        // ACCESS_BACKGROUND_LOCATION is required on Android 10-11 for background BLE scanning.
+        // Android 12+ uses BLUETOOTH_SCAN + connectedDevice foreground service type instead.
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.R) {
+            permissions.add(ACCESS_BACKGROUND_LOCATION)
         }
 
         for (permission in permissions) {

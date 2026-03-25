@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
 // Client Characteristic Configuration Descriptor — enables notifications/indications
 private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-private const val CONNECT_TIMEOUT_MS   = 10_000L
+private const val CONNECT_TIMEOUT_MS   = 30_000L
 private const val OPERATION_TIMEOUT_MS =  5_000L
 
 // ── Public data models ─────────────────────────────────────────────────────────
@@ -122,7 +122,25 @@ class BleGattManager(private val context: Context) {
             return
         }
         if (connections.containsKey(address)) {
-            Timber.d("BleGatt connect($address): already connected or connecting")
+            val conn = connections[address]
+            if (conn != null && conn.connected) {
+                // HA timed out waiting for ble_connect_result and retried — re-deliver the
+                // result using the already-discovered services so HA can proceed.
+                Timber.i("BleGatt connect($address): already connected, re-delivering result")
+                val gatt = conn.gatt ?: run {
+                    Timber.d("BleGatt connect($address): already connected but gatt is null")
+                    return
+                }
+                val serviceInfoList = gatt.services.map { service ->
+                    val charInfoList = service.characteristics.map { char ->
+                        BleGattCharacteristicInfo(uuid = char.uuid.toString(), properties = char.properties)
+                    }
+                    BleGattServiceInfo(uuid = service.uuid.toString(), characteristics = charInfoList)
+                }
+                dispatch { onConnected(address, conn.mtu, serviceInfoList) }
+            } else {
+                Timber.d("BleGatt connect($address): already connecting, ignoring duplicate request")
+            }
             return
         }
         val maxConnections = config.bleMaxConnections

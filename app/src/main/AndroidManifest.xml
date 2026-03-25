@@ -42,9 +42,13 @@
 
     <!--Restart Service After Reboot the Mobile Device-->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!--Legacy BLE permissions required on Android 8–11 (superseded by BLUETOOTH_SCAN/CONNECT on API 31+)-->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!--Write permissions for auto updating-->
@@ -90,6 +94,11 @@
         <service
             android:name=".service.VAForegroundService"
             android:foregroundServiceType="microphone|mediaPlayback|camera|connectedDevice"
+            android:exported="false" />
+
+        <!--BLE PendingIntent scan result receiver — fires even when app process is killed-->
+        <receiver
+            android:name=".sensors.BleScanReceiver"
             android:exported="false" />
 
         <!--Broadcast Receiver (Optional)-->

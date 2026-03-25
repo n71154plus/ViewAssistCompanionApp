@@ -823,7 +823,12 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         if (permissions.hasCorePermissions()) {
             log.d("Main permissions granted")
         }
-        checkAndRequestWriteSettingsPermission()
+        // Background location result returns here too — go straight to next step to avoid loop
+        if (requestCode == BACKGROUND_LOCATION_PERMISSIONS_REQUEST) {
+            checkAndRequestWriteSettingsPermission()
+        } else {
+            checkAndRequestBackgroundLocationPermission()
+        }
         /*
         } else {
             log.d("Main permissions not granted will not run background tasks")
@@ -846,6 +851,26 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         private const val WRITE_EXTERNAL_STORAGE_PERMISSIONS_REQUEST = 400
         private const val LOCATION_PERMISSIONS_REQUEST = 450
         private const val BLUETOOTH_PERMISSIONS_REQUEST = 500
+        private const val BACKGROUND_LOCATION_PERMISSIONS_REQUEST = 550
+    }
+
+    // ACCESS_BACKGROUND_LOCATION must be requested AFTER ACCESS_FINE_LOCATION is granted,
+    // in a separate requestPermissions() call (Android 11+ silently drops it if bundled).
+    // Only needed on API 29-30; Android 12+ uses BLUETOOTH_SCAN + connectedDevice FG service type.
+    private fun checkAndRequestBackgroundLocationPermission() {
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.R) {
+            if (ContextCompat.checkSelfPermission(this, permission.ACCESS_BACKGROUND_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+                log.d("Requesting ACCESS_BACKGROUND_LOCATION for Android 10-11 background BLE scanning")
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(permission.ACCESS_BACKGROUND_LOCATION),
+                    BACKGROUND_LOCATION_PERMISSIONS_REQUEST
+                )
+                return
+            }
+        }
+        checkAndRequestWriteSettingsPermission()
     }
 
     private val onWriteSettingsPermissionActivityResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {

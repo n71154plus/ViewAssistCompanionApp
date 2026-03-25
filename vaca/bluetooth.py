@@ -317,6 +317,10 @@ class VacaBleGattProxy:
             return await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError:
             self._connect_futures.pop(addr, None)
+            # Do NOT disconnect Android here — let it finish connecting.
+            # The next retry will either receive the pending ble_connect_result
+            # (via the future keyed by address) or trigger a re-delivery via
+            # BleGattManager's "already connected" path (Fix 3).
             raise
 
     async def async_disconnect(self, address: str) -> None:
@@ -591,18 +595,34 @@ class VacaBleakClient(BaseBleakClient):
             min(CONNECT_FREE_SLOT_TIMEOUT, timeout)
         )
 
-    async def connect(self, **kwargs: Any) -> bool:
-        """Connect to the device and populate self.services."""
-        await self._wait_for_free_connection_slot(
-            kwargs.get("timeout", DEFAULT_CONNECT_TIMEOUT)
+    async def connect(self, pair: bool = False, **kwargs: Any) -> bool:
+        """Connect to the device and populate self.services.
+
+        bleak 1.0 changed the backend connect() signature: the first positional
+        argument is now ``pair`` (bool), and timeout is stored on the instance
+        as ``self._timeout`` (set by BaseBleakClient.__init__ from the outer
+        BleakClient constructor).  Accepting ``timeout`` as the first positional
+        arg caused it to receive False/0 and timeout immediately.
+        """
+        # Use the timeout stored by BaseBleakClient.__init__ (from the outer
+        # BleakClient(ble_device, timeout=N) constructor argument).
+        # Guard: bleak 1.0 passes pair_before_connect=False as first positional arg,
+        # which BaseBleakClient may store as self._timeout=False (falsy/zero).
+        # Fall back to DEFAULT_CONNECT_TIMEOUT for any invalid value.
+        _raw_timeout = getattr(self, "_timeout", None)
+        timeout: float = (
+            float(_raw_timeout)
+            if isinstance(_raw_timeout, (int, float)) and _raw_timeout > 0
+            else DEFAULT_CONNECT_TIMEOUT
         )
+        await self._wait_for_free_connection_slot(timeout)
         self._proxy.register_disconnect_callback(
             self._address, self._async_ble_device_disconnected
         )
         try:
             result = await self._proxy.async_connect(
                 self._address,
-                timeout=kwargs.get("timeout", DEFAULT_CONNECT_TIMEOUT),
+                timeout=timeout,
             )
         except BleakError:
             self._proxy.unregister_disconnect_callback(
@@ -639,7 +659,13 @@ class VacaBleakClient(BaseBleakClient):
 
     async def disconnect(self) -> bool:
         """Disconnect from the device."""
-        await self._proxy.async_disconnect(self._address)
+        if self._is_connected:
+            # Only tell Android to disconnect if we successfully connected.
+            # When connect() times out, _is_connected is still False; sending
+            # ble_disconnect in that case would interrupt Android's ongoing
+            # connection attempt and cause a spurious ble_disconnected event
+            # that wipes the notify-callback table for the next attempt.
+            await self._proxy.async_disconnect(self._address)
         self._async_disconnected_cleanup()
         return True
 

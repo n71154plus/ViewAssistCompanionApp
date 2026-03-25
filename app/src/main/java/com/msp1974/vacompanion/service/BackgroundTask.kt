@@ -76,6 +76,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private var httpServer: VacaHttpServer? = null
     private var bleScanner: BleScanner? = null
     private var bleGattManager: BleGattManager? = null
+    private var lastPipelineNullWarnAt = 0L
     private var appInstallReceiver: AppInstallReceiver? = null
     private lateinit var volumeObserver: VolumeObserver
 
@@ -164,7 +165,11 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                 if (client != null) {
                     client.sendBleAdvertisement(data)
                 } else {
-                    Timber.w("BLE adv dropped: pipelineClient is null (HA not connected)")
+                    val now = System.currentTimeMillis()
+                    if (now - lastPipelineNullWarnAt > 30_000L) {
+                        lastPipelineNullWarnAt = now
+                        Timber.w("BLE adv dropped: Wyoming pipeline not connected (HA satellite not running?)")
+                    }
                 }
             }
             bleScanner?.start()
