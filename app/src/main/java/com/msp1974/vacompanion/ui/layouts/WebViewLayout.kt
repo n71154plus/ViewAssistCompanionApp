@@ -29,12 +29,14 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.msp1974.vacompanion.settings.PageLoadingStage
 import com.msp1974.vacompanion.ui.VAViewModel
 import com.msp1974.vacompanion.ui.components.DiagnosticBar
+import com.msp1974.vacompanion.settings.APPConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
 fun WebViewScreen (webView: WebView, vaViewModel: VAViewModel = viewModel()) {
     val vaUiState by vaViewModel.vacaState.collectAsState()
+    val config = vaViewModel.config
 
     Box(modifier = Modifier.fillMaxSize()) {
         var modifier = Modifier
@@ -70,6 +72,10 @@ fun WebViewScreen (webView: WebView, vaViewModel: VAViewModel = viewModel()) {
                 vaUiState.diagnosticInfo,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
+        }
+
+        if (config != null && config.showFloatingLauncherBar) {
+            FloatingLauncherBar(config = config)
         }
     }
 }

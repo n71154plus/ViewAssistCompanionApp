@@ -16,7 +16,12 @@ data class AppInfo(
 
 class InstalledAppsManager(private val context: Context) {
 
-    private var cache: List<AppInfo>? = null
+    companion object {
+        @Volatile var cache: List<AppInfo>? = null
+            internal set
+
+        fun invalidateCache() { cache = null }
+    }
 
     fun getAllApps(deviceIp: String, iconServerPort: Int = 8080): List<AppInfo> {
         cache?.let { return it }
@@ -26,7 +31,7 @@ class InstalledAppsManager(private val context: Context) {
     }
 
     fun invalidateCache() {
-        cache = null
+        Companion.invalidateCache()
     }
 
     private fun buildAppList(deviceIp: String, iconServerPort: Int): List<AppInfo> {

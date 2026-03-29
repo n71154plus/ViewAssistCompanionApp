@@ -90,6 +90,18 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".launcher.LauncherActivity"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:exported="false" />
+
+        <activity
+            android:name=".launcher.HADashboardActivity"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:exported="false" />
+
         <!--Service-->
         <service
             android:name=".service.VAForegroundService"

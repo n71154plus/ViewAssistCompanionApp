@@ -5,6 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.msp1974.vacompanion.utils.ActivityManager
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesManager
+import com.msp1974.vacompanion.utils.InstalledAppsManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import timber.log.Timber.DebugTree
 
@@ -16,6 +20,11 @@ class VACAApplication: Application() {
         DeviceCapabilitiesManager.appContext = this
 
         Timber.plant(DebugTree())
+
+        // Pre-warm app list cache in background so LauncherActivity opens instantly
+        CoroutineScope(Dispatchers.IO).launch {
+            InstalledAppsManager(applicationContext).getAllApps("")
+        }
 
         // Create the notification channel (required for Android 8.0 and above)
         val channel = NotificationChannel(

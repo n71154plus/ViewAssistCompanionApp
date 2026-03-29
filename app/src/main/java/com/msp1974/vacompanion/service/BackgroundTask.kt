@@ -81,7 +81,6 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private var bleScanner: BleScanner? = null
     private var bleGattManager: BleGattManager? = null
     private var lastPipelineNullWarnAt = 0L
-    private var appInstallReceiver: AppInstallReceiver? = null
     private lateinit var volumeObserver: VolumeObserver
 
     private var motionTask = CameraBackgroundTask(context)
@@ -90,6 +89,8 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private val appInstallReceiver = AppInstallReceiver {
         installedAppsManager.invalidateCache()
         sendAppList()
+        server.deviceInfo = DeviceCapabilitiesManager(context).getDeviceInfo()
+        server.pipelineClient?.sendCapabilities()
     }
 
     fun start() {
@@ -195,19 +196,6 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         // Wire bleScanner and bleGattManager to httpServer AFTER they are created
         httpServer?.bleScanner = bleScanner
         httpServer?.bleGattManager = bleGattManager
-
-        // Register app install receiver
-        appInstallReceiver = AppInstallReceiver {
-            server.deviceInfo = DeviceCapabilitiesManager(context).getDeviceInfo()
-            server.pipelineClient?.sendCapabilities()
-        }
-        val appFilter = android.content.IntentFilter().apply {
-            addAction(android.content.Intent.ACTION_PACKAGE_ADDED)
-            addAction(android.content.Intent.ACTION_PACKAGE_REMOVED)
-            addAction(android.content.Intent.ACTION_PACKAGE_REPLACED)
-            addDataScheme("package")
-        }
-        context.registerReceiver(appInstallReceiver, appFilter)
 
         // Add config change listeners
         config.eventBroadcaster.addListener(this)
@@ -726,8 +714,6 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         bleGattManager?.disconnectAll()
         bleGattManager = null
         server.bleGattManager = null
-        try { context.unregisterReceiver(appInstallReceiver) } catch (e: Exception) {}
-        appInstallReceiver = null
 
     }
 }

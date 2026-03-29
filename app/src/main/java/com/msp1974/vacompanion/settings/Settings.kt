@@ -242,13 +242,25 @@ class APPConfig(val context: Context) {
         get() = this.sharedPrefs.getBoolean("can_set_notification_policy_access", true)
         set(value) = this.sharedPrefs.edit { putBoolean("can_set_notification_policy_access", value) }
 
-    var recentAppsCount: Int
-        get() = this.sharedPrefs.getInt("recent_apps_count", 10)
-        set(value) = this.sharedPrefs.edit { putInt("recent_apps_count", value) }
+    var showFloatingLauncherBar: Boolean
+        get() = this.sharedPrefs.getBoolean("show_floating_launcher_bar", true)
+        set(value) = this.sharedPrefs.edit { putBoolean("show_floating_launcher_bar", value) }
 
-    var frequentAppsCount: Int
-        get() = this.sharedPrefs.getInt("frequent_apps_count", 10)
-        set(value) = this.sharedPrefs.edit { putInt("frequent_apps_count", value) }
+    var floatingBarPositionX: Float
+        get() = this.sharedPrefs.getFloat("floating_bar_position_x", 0.9f)
+        set(value) = this.sharedPrefs.edit { putFloat("floating_bar_position_x", value) }
+
+    var floatingBarPositionY: Float
+        get() = this.sharedPrefs.getFloat("floating_bar_position_y", 0.5f)
+        set(value) = this.sharedPrefs.edit { putFloat("floating_bar_position_y", value) }
+
+    var showShortcutDock: Boolean
+        get() = this.sharedPrefs.getBoolean("show_shortcut_dock", false)
+        set(value) = this.sharedPrefs.edit { putBoolean("show_shortcut_dock", value) }
+
+    var pinnedShortcuts: String
+        get() = this.sharedPrefs.getString("pinned_shortcuts", "[]") ?: "[]"
+        set(value) = this.sharedPrefs.edit { putString("pinned_shortcuts", value) }
 
 
     var startOnBoot: Boolean
