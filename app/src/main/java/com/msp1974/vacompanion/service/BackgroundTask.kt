@@ -26,6 +26,8 @@ import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers
+import com.msp1974.vacompanion.utils.InstalledAppsManager
+import com.msp1974.vacompanion.utils.RecentAppsManager
 import com.msp1974.vacompanion.utils.VolumeObserver
 import com.msp1974.vacompanion.wakeword.WakeWordEngine
 import com.msp1974.vacompanion.wakeword.WakeWordEngineModel
@@ -39,8 +41,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import timber.log.Timber
 import java.util.Date
@@ -81,6 +85,12 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private lateinit var volumeObserver: VolumeObserver
 
     private var motionTask = CameraBackgroundTask(context)
+    private val installedAppsManager = InstalledAppsManager(context)
+    private val recentAppsManager = RecentAppsManager(context)
+    private val appInstallReceiver = AppInstallReceiver {
+        installedAppsManager.invalidateCache()
+        sendAppList()
+    }
 
     fun start() {
         assetManager = context.assets
@@ -110,12 +120,15 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                 volumeObserver.register()
                 startSensors(context)
                 runWakeWordDetection()
+                appInstallReceiver.register(context)
+                sendAppList()
                 BroadcastSender.sendBroadcast(context, BroadcastSender.SATELLITE_STARTED)
                 zeroConf.unregisterService()
             }
 
             override fun onSatelliteStopped() {
                 Timber.i("Background Task - Disconnection detected")
+                appInstallReceiver.unregister(context)
                 BroadcastSender.sendBroadcast(context, BroadcastSender.SATELLITE_STOPPED)
                 if (sensorRunner != null) {
                     sensorRunner!!.stop()
@@ -430,6 +443,63 @@ internal class BackgroundTaskController (private val context: Context): EventLis
 
     fun setInitialValues() {
         config.doNotDisturb = DeviceCapabilitiesManager.isDoNotDisturbEnabled(context)
+    }
+
+    private fun sendAppList() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val deviceIp = Helpers.getIpv4HostAddress()
+                val allApps = installedAppsManager.getAllApps(deviceIp)
+
+                val recentApps = if (recentAppsManager.hasUsagePermission())
+                    recentAppsManager.getRecentApps(config.recentAppsCount)
+                else emptyList()
+
+                val frequentApps = if (recentAppsManager.hasUsagePermission())
+                    recentAppsManager.getFrequentApps(config.frequentAppsCount)
+                else emptyList()
+
+                server.sendStatus(buildJsonObject {
+                    putJsonObject("sensors") {
+                        putJsonArray("installed_apps") {
+                            allApps.forEach { app ->
+                                add(buildJsonObject {
+                                    put("package", app.packageName)
+                                    put("name", app.label)
+                                    put("category", app.category)
+                                    put("icon_url", app.iconUrl)
+                                })
+                            }
+                        }
+                        putJsonArray("recent_apps") {
+                            recentApps.forEach { app ->
+                                add(buildJsonObject {
+                                    put("package", app.packageName)
+                                    put("name", app.label)
+                                    put("category", app.category)
+                                    put("icon_url", "http://$deviceIp:8080/icon?pkg=${app.packageName}")
+                                    put("last_used", app.lastUsed)
+                                })
+                            }
+                        }
+                        putJsonArray("frequent_apps") {
+                            frequentApps.forEach { app ->
+                                add(buildJsonObject {
+                                    put("package", app.packageName)
+                                    put("name", app.label)
+                                    put("category", app.category)
+                                    put("icon_url", "http://$deviceIp:8080/icon?pkg=${app.packageName}")
+                                    put("use_count", app.useCount)
+                                })
+                            }
+                        }
+                    }
+                })
+                Timber.d("App list sent to HA: ${allApps.size} installed, ${recentApps.size} recent, ${frequentApps.size} frequent")
+            } catch (e: Exception) {
+                Timber.e("Error sending app list: $e")
+            }
+        }
     }
 
     fun startSensors(context: Context) {

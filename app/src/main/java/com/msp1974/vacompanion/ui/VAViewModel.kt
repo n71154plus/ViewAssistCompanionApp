@@ -7,11 +7,13 @@ import com.msp1974.vacompanion.broadcasts.BroadcastSender
 import com.msp1974.vacompanion.service.AudioRouteOption
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.PageLoadingStage
+import com.msp1974.vacompanion.utils.AppInfo
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.Helpers
 import com.msp1974.vacompanion.utils.Logger
 import com.msp1974.vacompanion.utils.Permissions
+import com.msp1974.vacompanion.utils.RecentAppInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,7 +40,12 @@ data class State(
     var permissions: PermissionsStatus = PermissionsStatus(),
     var updates: UpdateStatus = UpdateStatus(),
     var webViewPageLoadingStage: PageLoadingStage = PageLoadingStage.NOT_STARTED,
-    var showUUIDChangeDialog: Boolean = false
+    var showUUIDChangeDialog: Boolean = false,
+
+    var showLauncher: Boolean = false,
+    var launcherApps: List<AppInfo> = emptyList(),
+    var launcherRecentApps: List<RecentAppInfo> = emptyList(),
+    var launcherFrequentApps: List<RecentAppInfo> = emptyList()
     )
 
 class VAViewModel: ViewModel(), EventListener {
@@ -273,6 +280,22 @@ class VAViewModel: ViewModel(), EventListener {
             buildAppInfo()
             config!!.eventBroadcaster.notifyEvent(Event("restartZeroconf", "", ""))
         }
+    }
+
+    fun setLauncherVisible(visible: Boolean) {
+        _vacaState.update { it.copy(showLauncher = visible) }
+    }
+
+    fun setLauncherData(
+        all: List<AppInfo>,
+        recent: List<RecentAppInfo>,
+        frequent: List<RecentAppInfo>
+    ) {
+        _vacaState.update { it.copy(
+            launcherApps = all,
+            launcherRecentApps = recent,
+            launcherFrequentApps = frequent
+        )}
     }
 }
 

@@ -28,6 +28,16 @@ class WebAppInterface(val config: APPConfig, val cbCallback: ViewAssistCallback)
     fun sendEvent(event: String, data: String) {
         cbCallback.onEvent(event, data)
     }
+
+    @JavascriptInterface
+    fun openLauncher() {
+        cbCallback.onEvent("openLauncher", "")
+    }
+
+    @JavascriptInterface
+    fun closeLauncher() {
+        cbCallback.onEvent("closeLauncher", "")
+    }
 }
 
 class WebViewJavascriptInterface(val view: WebView, val cbCallback: ExternalAuthCallback) {

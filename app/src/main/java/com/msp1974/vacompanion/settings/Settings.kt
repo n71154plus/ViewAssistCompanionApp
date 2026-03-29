@@ -242,6 +242,15 @@ class APPConfig(val context: Context) {
         get() = this.sharedPrefs.getBoolean("can_set_notification_policy_access", true)
         set(value) = this.sharedPrefs.edit { putBoolean("can_set_notification_policy_access", value) }
 
+    var recentAppsCount: Int
+        get() = this.sharedPrefs.getInt("recent_apps_count", 10)
+        set(value) = this.sharedPrefs.edit { putInt("recent_apps_count", value) }
+
+    var frequentAppsCount: Int
+        get() = this.sharedPrefs.getInt("frequent_apps_count", 10)
+        set(value) = this.sharedPrefs.edit { putInt("frequent_apps_count", value) }
+
+
     var startOnBoot: Boolean
         get() = this.sharedPrefs.getBoolean("startOnBoot", false)
         set(value) = this.sharedPrefs.edit { putBoolean("startOnBoot", value) }

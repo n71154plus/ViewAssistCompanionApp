@@ -18,6 +18,7 @@ import com.msp1974.vacompanion.jsinterface.WebAppInterface
 import com.msp1974.vacompanion.jsinterface.WebViewJavascriptInterface
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.PageLoadingStage
+import com.msp1974.vacompanion.utils.Event
 import timber.log.Timber
 
 @SuppressLint("SetJavaScriptEnabled", "ViewConstructor")
@@ -83,12 +84,11 @@ class CustomWebView @JvmOverloads constructor(
 
     val ViewAssistEventHandler = object : ViewAssistCallback {
         override fun onEvent(event: String, data: String) {
-            //if (event == "location-changed") {
-            //    Handler(Looper.getMainLooper()).post({
-            //        setPageLoadingState(PageLoadingStage.LOADED)
-            //    })
-            //}
-            Timber.d("Event received: $event, $data")
+            Timber.d("JS event received: $event, $data")
+            when (event) {
+                "openLauncher", "closeLauncher" ->
+                    config.eventBroadcaster.notifyEvent(Event(event, "", data))
+            }
         }
     }
 

@@ -517,6 +517,22 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                     }
                 }
             }
+
+            "launch-app" -> {
+                if (event.getProp("payload") != "") {
+                    try {
+                        val values = JSONObject(event.getProp("payload"))
+                        val packageName = values.getString("package_name")
+                        config.eventBroadcaster.notifyEvent(Event("launchApp", "", packageName))
+                    } catch (ex: Exception) {
+                        log.e("Error handling launch-app: $ex")
+                    }
+                }
+            }
+
+            "open-launcher" -> {
+                config.eventBroadcaster.notifyEvent(Event("openLauncher", "", ""))
+            }
         }
     }
 

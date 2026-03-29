@@ -57,6 +57,7 @@ import com.msp1974.vacompanion.ui.VADialog
 import com.msp1974.vacompanion.ui.components.VADialog
 import com.msp1974.vacompanion.ui.layouts.BlackScreen
 import com.msp1974.vacompanion.ui.layouts.ConnectionScreen
+import com.msp1974.vacompanion.ui.layouts.LauncherScreen
 import com.msp1974.vacompanion.ui.layouts.WebViewScreen
 import com.msp1974.vacompanion.ui.theme.AppTheme
 import com.msp1974.vacompanion.utils.AuthUtils
@@ -178,6 +179,16 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                         } else {
                             ConnectionScreen()
                         }
+                    }
+                    // Native launcher overlay — shown above WebView/ConnectionScreen
+                    if (vaUiState.showLauncher) {
+                        LauncherScreen(
+                            onDismiss = { viewModel.setLauncherVisible(false) },
+                            onLaunch = { packageName ->
+                                viewModel.setLauncherVisible(false)
+                                launchApp(packageName)
+                            }
+                        )
                     }
                     when {
                         vaUiState.alertDialog != null -> {
@@ -574,11 +585,24 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     event.newValue as String,
                     Toast.LENGTH_SHORT
                 ).show()
+                "launchApp" -> launchApp(event.newValue as String)
+                "openLauncher" -> viewModel.setLauncherVisible(true)
+                "closeLauncher" -> viewModel.setLauncherVisible(false)
                 else -> consumed = false
             }
             if (consumed) {
                 log.d("MainActivity - Event: ${event.eventName} - ${event.newValue}")
             }
+        }
+    }
+
+    private fun launchApp(packageName: String) {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        if (launchIntent != null) {
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(launchIntent)
+        } else {
+            log.w("Cannot launch app: package not found - $packageName")
         }
     }
 

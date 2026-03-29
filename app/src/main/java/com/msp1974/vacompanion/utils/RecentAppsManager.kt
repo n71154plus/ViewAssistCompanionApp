@@ -21,7 +21,7 @@ class RecentAppsManager(private val context: Context) {
         return try {
             val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val now = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 60_000, now)
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 30L * 24 * 60 * 60 * 1000, now)
             stats != null && stats.isNotEmpty()
         } catch (e: Exception) { false }
     }
