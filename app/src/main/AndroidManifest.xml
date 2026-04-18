@@ -51,6 +51,9 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!--Exempt from battery optimisation (Doze) so the service survives in the background-->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!--Write permissions for auto updating-->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"
@@ -81,6 +84,13 @@
             android:showOnLockScreen="true"
             android:showWhenLocked="true"
             android:enabled="true"
+            android:exported="true" />
+
+        <activity
+            android:name=".launcher.LauncherActivity"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:theme="@style/Theme.VACompanion"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -89,12 +99,6 @@
                 <category android:name="android.intent.category.HOME" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".launcher.LauncherActivity"
-            android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
-            android:exported="false" />
 
         <activity
             android:name=".launcher.HADashboardActivity"
@@ -106,6 +110,7 @@
         <service
             android:name=".service.VAForegroundService"
             android:foregroundServiceType="microphone|mediaPlayback|camera|connectedDevice"
+            android:stopWithTask="false"
             android:exported="false" />
 
         <!--BLE PendingIntent scan result receiver — fires even when app process is killed-->

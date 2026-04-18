@@ -36,7 +36,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.absoluteValue
 import kotlin.math.max
@@ -67,12 +66,17 @@ class CameraBackgroundTask(val context: Context) {
 
     private var sensorOrientation: Int = 0
 
-    // MJPEG output - written by background encoder, read by HTTP server
+    // MJPEG output — written on cameraHandler thread, read by HTTP server
     @Volatile var latestJpegFrame: ByteArray? = null
 
-    // Single-slot queue: drop old frame if encoder is still busy
-    private val mjpegQueue = ArrayBlockingQueue<ByteArray>(1)
-    private var encoderJob: Job? = null
+    // Pre-allocated encode buffers (reused across frames — same dimensions for session lifetime)
+    private var yDataBuf: ByteArray? = null
+    private var nv21Buf: ByteArray? = null
+    private var vRowBuf: ByteArray? = null
+    private val jpegOutput = ByteArrayOutputStream(32768)
+
+    // AE/AWB lock scheduling
+    private var aeLockScheduled = false
 
     companion object {
         const val MOTION_INTERVAL = 10000
@@ -94,18 +98,18 @@ class CameraBackgroundTask(val context: Context) {
         isRunning = true
         startCameraThread()
         scope.launch { initCam() }
-        startMjpegEncoder()
     }
 
     fun stopCamera() {
         if (!isRunning) return
         isRunning = false
-        encoderJob?.cancel()
-        encoderJob = null
         closeCamera()
         stopCameraThread()
         latestJpegFrame = null
-        mjpegQueue.clear()
+        yDataBuf = null
+        nv21Buf = null
+        vRowBuf = null
+        jpegOutput.reset()
     }
 
     fun restartWithNewFps() {
@@ -139,6 +143,7 @@ class CameraBackgroundTask(val context: Context) {
     private fun closeSession() {
         try { captureSession?.close() } catch (e: Exception) {}
         captureSession = null
+        aeLockScheduled = false
     }
 
     private fun closeCamera() {
@@ -229,14 +234,18 @@ class CameraBackgroundTask(val context: Context) {
             captureSession = session
             try {
                 val fps = if (config.mjpegStreamEnabled) config.mjpegFps.coerceIn(1, 30) else 5
-                val req = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                val req = cameraDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     addTarget(imageReader!!.surface)
-                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                    // AF OFF: front camera is fixed-focus; continuous AF sweeps cause 1-2s frame stalls
+                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    // Lock FPS range: prevents AE from slowing down to 1fps in low light
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
                 }.build()
                 session.setRepeatingRequest(req, captureCallback, cameraHandler)
                 Timber.d("Capture session started at ${fps}fps")
+                // Lock AE + AWB after 3s — prevents periodic 3A recalibration stalls
+                scheduleAeLock()
             } catch (e: CameraAccessException) {
                 Timber.e("setRepeatingRequest failed: $e")
                 scheduleRestart()
@@ -256,6 +265,35 @@ class CameraBackgroundTask(val context: Context) {
     private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, result: TotalCaptureResult) {}
         override fun onCaptureProgressed(s: CameraCaptureSession, r: CaptureRequest, result: CaptureResult) {}
+    }
+
+    // ── AE/AWB lock ───────────────────────────────────────────────────────────
+
+    private fun scheduleAeLock() {
+        if (aeLockScheduled) return
+        aeLockScheduled = true
+        // Post on the camera thread after 3 s so AE/AWB have time to converge first
+        cameraHandler?.postDelayed({
+            val device = cameraDevice ?: return@postDelayed
+            val reader = imageReader ?: return@postDelayed
+            val session = captureSession ?: return@postDelayed
+            if (!isRunning) return@postDelayed
+            val fps = if (config.mjpegStreamEnabled) config.mjpegFps.coerceIn(1, 30) else 5
+            try {
+                val req = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                    addTarget(reader.surface)
+                    set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                    set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
+                    set(CaptureRequest.CONTROL_AE_LOCK, true)
+                    set(CaptureRequest.CONTROL_AWB_LOCK, true)
+                }.build()
+                session.setRepeatingRequest(req, captureCallback, cameraHandler)
+                Timber.d("AE + AWB locked at ${fps}fps")
+            } catch (e: Exception) {
+                Timber.w("AE/AWB lock failed (device may not support): $e")
+            }
+        }, 3000L)
     }
 
     private fun createCaptureSession() {
@@ -306,8 +344,9 @@ class CameraBackgroundTask(val context: Context) {
             val uvRowStride = uPlane.rowStride
             val uvPixelStride = uPlane.pixelStride
 
-            // Copy Y plane (strip row padding)
-            val yData = ByteArray(width * height)
+            // Copy Y plane (strip row padding) into reusable buffer
+            val yData = yDataBuf?.takeIf { it.size == width * height }
+                ?: ByteArray(width * height).also { yDataBuf = it }
             val yBuf = yPlane.buffer
             for (row in 0 until height) {
                 yBuf.position(row * yRowStride)
@@ -332,55 +371,53 @@ class CameraBackgroundTask(val context: Context) {
                 }
             }
 
-            // MJPEG: build NV21 and push to encoder queue (non-blocking, drop if busy)
+            // MJPEG: encode JPEG inline on cameraHandler thread using reusable buffers
             if (config.mjpegStreamEnabled) {
-                val nv21 = ByteArray(width * height * 3 / 2)
+                // Reuse NV21 buffer (same size for the entire session)
+                val nv21 = nv21Buf?.takeIf { it.size == width * height * 3 / 2 }
+                    ?: ByteArray(width * height * 3 / 2).also { nv21Buf = it }
                 System.arraycopy(yData, 0, nv21, 0, yData.size)
                 val uBuf = uPlane.buffer
                 val vBuf = vPlane.buffer
                 var offset = width * height
-                for (row in 0 until height / 2) {
-                    for (col in 0 until width / 2) {
-                        val uvIdx = row * uvRowStride + col * uvPixelStride
-                        vBuf.position(uvIdx); nv21[offset++] = vBuf.get()
-                        uBuf.position(uvIdx); nv21[offset++] = uBuf.get()
+                if (uvPixelStride == 2) {
+                    // Fast path: V/U already interleaved in memory (most modern devices)
+                    val rowBytes = width - 1
+                    val vRow = vRowBuf?.takeIf { it.size == rowBytes }
+                        ?: ByteArray(rowBytes).also { vRowBuf = it }
+                    for (row in 0 until height / 2) {
+                        vBuf.position(row * uvRowStride)
+                        vBuf.get(vRow, 0, rowBytes)
+                        System.arraycopy(vRow, 0, nv21, offset, rowBytes)
+                        offset += rowBytes
+                        uBuf.position(row * uvRowStride + (width / 2 - 1) * uvPixelStride)
+                        nv21[offset++] = uBuf.get()
+                    }
+                } else {
+                    // Slow path: planar U/V (uvPixelStride == 1)
+                    val uRow = ByteArray(width / 2)
+                    val vRow = ByteArray(width / 2)
+                    for (row in 0 until height / 2) {
+                        vBuf.position(row * uvRowStride); vBuf.get(vRow)
+                        uBuf.position(row * uvRowStride); uBuf.get(uRow)
+                        for (col in 0 until width / 2) {
+                            nv21[offset++] = vRow[col]
+                            nv21[offset++] = uRow[col]
+                        }
                     }
                 }
-                // Width/height packed into first 8 bytes of a wrapper for the queue
-                val frame = FrameData(nv21, width, height)
-                mjpegQueue.poll() // drop previous unprocessed frame
-                mjpegQueue.offer(frame.toBytes())
+                // Compress to JPEG using reusable output stream — only allocates the final byte[]
+                jpegOutput.reset()
+                YuvImage(nv21, ImageFormat.NV21, width, height, null)
+                    .compressToJpeg(Rect(0, 0, width, height),
+                        config.mjpegQuality.coerceIn(10, 100), jpegOutput)
+                latestJpegFrame = jpegOutput.toByteArray()
             }
 
         } catch (e: Exception) {
             Timber.e("imageListener error: $e")
         } finally {
             image.close()
-        }
-    }
-
-    // ── MJPEG encoder (single dedicated coroutine) ────────────────────────────
-
-    private fun startMjpegEncoder() {
-        encoderJob?.cancel()
-        encoderJob = scope.launch(Dispatchers.Default) {
-            while (isRunning) {
-                val frameBytes = mjpegQueue.poll() ?: run {
-                    delay(10)
-                    null
-                } ?: continue
-
-                try {
-                    val frame = FrameData.fromBytes(frameBytes)
-                    val yuvImage = YuvImage(frame.nv21, ImageFormat.NV21, frame.width, frame.height, null)
-                    val rawOut = ByteArrayOutputStream()
-                    yuvImage.compressToJpeg(Rect(0, 0, frame.width, frame.height),
-                        config.mjpegQuality.coerceIn(10, 100), rawOut)
-                    latestJpegFrame = rawOut.toByteArray()
-                } catch (e: Exception) {
-                    Timber.e("MJPEG encoder error: $e")
-                }
-            }
         }
     }
 
@@ -398,21 +435,4 @@ class CameraBackgroundTask(val context: Context) {
         } ?: Size(w, h)
     }
 
-    // ── Frame data wrapper ────────────────────────────────────────────────────
-
-    private data class FrameData(val nv21: ByteArray, val width: Int, val height: Int) {
-        fun toBytes(): ByteArray {
-            val buf = java.nio.ByteBuffer.allocate(8 + nv21.size)
-            buf.putInt(width); buf.putInt(height); buf.put(nv21)
-            return buf.array()
-        }
-        companion object {
-            fun fromBytes(b: ByteArray): FrameData {
-                val buf = java.nio.ByteBuffer.wrap(b)
-                val w = buf.int; val h = buf.int
-                val nv21 = ByteArray(b.size - 8).also { buf.get(it) }
-                return FrameData(nv21, w, h)
-            }
-        }
-    }
 }

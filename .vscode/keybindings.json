@@ -1,0 +1,7 @@
+[
+  {
+    "key": "ctrl+alt+q",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Build + Install APK (All Devices)"
+  }
+]

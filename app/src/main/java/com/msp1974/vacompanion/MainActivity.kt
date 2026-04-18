@@ -20,11 +20,12 @@ import android.content.res.Configuration
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.StrictMode
 import android.provider.Settings
-import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -58,11 +59,8 @@ import com.msp1974.vacompanion.ui.components.VADialog
 import com.msp1974.vacompanion.ui.layouts.BlackScreen
 import com.msp1974.vacompanion.ui.layouts.ConnectionScreen
 import com.msp1974.vacompanion.ui.layouts.LauncherScreen
-import com.msp1974.vacompanion.ui.layouts.WebViewScreen
+import com.msp1974.vacompanion.launcher.LauncherActivity
 import com.msp1974.vacompanion.ui.theme.AppTheme
-import com.msp1974.vacompanion.utils.AuthUtils
-import com.msp1974.vacompanion.utils.CustomWebView
-import com.msp1974.vacompanion.utils.CustomWebViewClient
 import com.msp1974.vacompanion.utils.DeviceCapabilitiesManager
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
@@ -90,8 +88,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     private val firebase = FirebaseManager.getInstance()
 
     private lateinit var config: APPConfig
-    private lateinit var webView: CustomWebView
-    private lateinit var webViewClient: CustomWebViewClient
 
     private lateinit var screen: ScreenUtils
     private lateinit var updater: Updater
@@ -156,8 +152,15 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         setScreenSettings()
 
-        // Init webview setup
-        initWebView()
+        // 啟動時直接進入 LauncherActivity（頁面依使用者設定的主畫面）
+        if (!intent.getBooleanExtra("from_launcher", false)) {
+            startActivity(
+                Intent(this, LauncherActivity::class.java).apply {
+                    putExtra(LauncherActivity.EXTRA_PAGE, config.launcherHomePage)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }
 
         setContent {
             val vaUiState by viewModel.vacaState.collectAsState()
@@ -171,7 +174,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                         if (vaUiState.screenBlank) {
                             BlackScreen()
                         } else {
-                            WebViewScreen(webView)
+                            ConnectionScreen()
                         }
                     } else {
                         if (vaUiState.screenBlank) {
@@ -180,7 +183,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                             ConnectionScreen()
                         }
                     }
-                    // Native launcher overlay — shown above WebView/ConnectionScreen
+                    // Native launcher overlay — shown above primary content
                     if (vaUiState.showLauncher) {
                         LauncherScreen(
                             onDismiss = { viewModel.setLauncherVisible(false) },
@@ -261,16 +264,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         }
     }
 
-    fun initWebView() {
-        webViewClient = CustomWebViewClient(viewModel)
-        webView = CustomWebView.getView(this)
-        webView.initialise(config, webViewClient)
-        webView.layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-        )
-    }
-
     val onBackButton = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {}
     }
@@ -328,7 +321,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             addAction(BroadcastSender.SATELLITE_STARTED)
             addAction(BroadcastSender.SATELLITE_STOPPED)
             addAction(BroadcastSender.VERSION_MISMATCH)
-            addAction(BroadcastSender.WEBVIEW_CRASH)
         }
         LocalBroadcastManager.getInstance(this)
             .registerReceiver(satelliteBroadcastReceiver, filter)
@@ -346,6 +338,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         registerWifiMonitor()
 
+        // Prompt user to disable battery optimisation if not already done
+        checkBatteryOptimization()
+
         // Start background tasks
         runBackgroundTasks()
     }
@@ -357,11 +352,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             when (intent.action) {
                 BroadcastSender.SATELLITE_STARTED -> {
                     viewModel.setSatelliteRunning(true)
-                    webView.setZoomLevel(config.zoomLevel)
                     config.screenOn = screen.isScreenOn()
-                    val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
-                    log.d("Loading URL: $url")
-                    webView.loadUrl(url)
                 }
                 BroadcastSender.SATELLITE_STOPPED -> {
                     viewModel.setSatelliteRunning(false)
@@ -374,12 +365,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 }
                 BroadcastSender.REQUEST_MISSING_PERMISSIONS -> {
                     checkAndRequestPermissions()
-                }
-                BroadcastSender.WEBVIEW_CRASH -> {
-                    initWebView()
-                    val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
-                    log.d("Loading URL: $url")
-                    webView.loadUrl(url)
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     if (initialised) {
@@ -451,6 +436,20 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // 若非從 LauncherActivity 返回，維持導向 Launcher（主畫面頁）
+        if (!intent.getBooleanExtra("from_launcher", false)) {
+            startActivity(
+                Intent(this, LauncherActivity::class.java).apply {
+                    putExtra(LauncherActivity.EXTRA_PAGE, config.launcherHomePage)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }
+    }
+
     // Listening to the orientation config
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -488,10 +487,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             firebase.logEvent(FirebaseManager.MAIN_ACTIVITY_BACKGROUND_TASK_ALREADY_RUNNING, mapOf())
             if (config.isRunning) {
                 viewModel.setSatelliteRunning(true)
-                webView.setZoomLevel(config.zoomLevel)
-                val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
-                log.d("Loading URL: $url")
-                webView.loadUrl(url)
             } else {
                 setStatus(getString(R.string.status_waiting_for_connection))
             }
@@ -524,6 +519,29 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         setScreenSettings()
         initialised = true
         Timber.d("Initialised")
+    }
+
+    private fun checkBatteryOptimization() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        // Only ask on API 23+ where the API exists
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        viewModel.showUpdateDialog(VADialog(
+            title = "Battery Optimization",
+            message = "To keep View Assist running reliably in the background, please disable battery optimization for this app.",
+            confirmText = "Go to Settings",
+            dismissText = "Later",
+            confirmCallback = {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    })
+                } catch (e: Exception) {
+                    Timber.w("Could not open battery optimization settings: ${e.message}")
+                }
+            },
+            dismissCallback = {}
+        ))
     }
 
     override fun onEventTriggered(event: Event) {
@@ -562,9 +580,9 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             consumed = true
 
             when (event.eventName) {
-                "zoomLevel" -> webView.setZoomLevel(event.newValue as Int)
+                "zoomLevel" -> {}
                 "darkMode" -> setDarkMode(event.newValue as Boolean)
-                "refresh" -> webView.reload()
+                "refresh" -> {}
                 "screenWake" -> screenWake()
                 "screenSleep" -> screenSleep()
                 "screenSaver" -> screenSaver(event.newValue as Boolean)
@@ -585,7 +603,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     event.newValue as String,
                     Toast.LENGTH_SHORT
                 ).show()
-                "launchApp" -> launchApp(event.newValue as String)
                 "openLauncher" -> viewModel.setLauncherVisible(true)
                 "closeLauncher" -> viewModel.setLauncherVisible(false)
                 else -> consumed = false
@@ -732,7 +749,6 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             uiModeManager.nightMode = if (isDark) UiModeManager.MODE_NIGHT_YES else UiModeManager.MODE_NIGHT_NO
         }
 
-        webView.refreshDarkMode()
     }
 
     private fun updatePermissionStatus() {
@@ -1001,6 +1017,11 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             checkAndRequestDeviceAdminPermission()
             return
         }
+        if (!config.canRequestUsageAccess) {
+            log.d("Usage access permission request suppressed by user")
+            checkAndRequestDeviceAdminPermission()
+            return
+        }
         AlertDialog.Builder(this).apply {
             setTitle("Usage Access Permission")
             setMessage("VACA needs Usage Access permission to show recently used and frequently used apps on your dashboard. Tap 'Open Settings', find VACA in the list and enable it.")
@@ -1015,6 +1036,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             }
             setNegativeButton("Skip") { _: DialogInterface?, _: Int ->
                 log.d("User skipped usage access permission")
+                config.canRequestUsageAccess = false
                 checkAndRequestDeviceAdminPermission()
             }
         }.create().show()

@@ -18,9 +18,9 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.Firebase
 import com.google.firebase.crashlytics.crashlytics
-import com.msp1974.vacompanion.MainActivity
 import com.msp1974.vacompanion.R
 import com.msp1974.vacompanion.VACAApplication
+import com.msp1974.vacompanion.launcher.LauncherActivity
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.BackgroundTaskStatus
 import kotlinx.coroutines.launch
@@ -164,8 +164,13 @@ class VAForegroundService : LifecycleService() {
 
     private fun startActivity(context: Context) {
         try {
-            val myIntent = Intent(context, MainActivity::class.java)
-            myIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val myIntent = Intent(context, LauncherActivity::class.java).apply {
+                putExtra(
+                    LauncherActivity.EXTRA_PAGE,
+                    APPConfig.getInstance(context).launcherHomePage
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             context.startActivity(myIntent)
         } catch (ex: Exception) {
             Timber.e("Watchdog failed to restart activity - ${ex.message}")
@@ -180,7 +185,29 @@ class VAForegroundService : LifecycleService() {
                     startActivity(this@VAForegroundService)
                 }
             }
-        },0,5000)
+        }, 3000, 5000) // 3s initial delay so activity has time to initialize before first check
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Timber.d("Task removed — scheduling activity restart via AlarmManager")
+        val restartIntent = android.app.PendingIntent.getActivity(
+            this, 0,
+            Intent(this, LauncherActivity::class.java).apply {
+                putExtra(
+                    LauncherActivity.EXTRA_PAGE,
+                    APPConfig.getInstance(this@VAForegroundService).launcherHomePage
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+        alarmManager.setExact(
+            android.app.AlarmManager.RTC_WAKEUP,
+            System.currentTimeMillis() + 1500,
+            restartIntent
+        )
     }
 
     private fun stopServiceIntent(name: String): PendingIntent {
@@ -208,7 +235,7 @@ class VAForegroundService : LifecycleService() {
             wifiLock!!.release()
         }
         try {
-            keyguardLock!!.reenableKeyguard()
+            keyguardLock?.reenableKeyguard()
         } catch (ex: Exception) {
             Timber.i("Enabling keyguard didn't work")
             ex.printStackTrace()

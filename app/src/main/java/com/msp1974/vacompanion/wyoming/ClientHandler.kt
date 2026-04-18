@@ -175,18 +175,14 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
 
             if (server.pipelineClient != null) {
                 log.d("Satellite taken over by $client_id from ${server.pipelineClient?.client_id}")
-                server.pipelineClient = this
-                satelliteStatus = SatelliteState.RUNNING
             } else {
-                // Ensure alarm is inactive
-                actionAlarm(false)
-
-                // Start satellite functions
-                server.pipelineClient = this
-                satelliteStatus = SatelliteState.RUNNING
-                server.satelliteStarted()
                 log.d("Satellite started for $client_id")
             }
+            // Ensure alarm is inactive, then start satellite functions (covers both fresh start and takeover)
+            actionAlarm(false)
+            server.pipelineClient = this
+            satelliteStatus = SatelliteState.RUNNING
+            server.satelliteStarted()
         } else {
             log.i("Invalid connection (${client.inetAddress.hostAddress}:$client_id) attempting to start satellite!")
             log.i("Aborting connection")

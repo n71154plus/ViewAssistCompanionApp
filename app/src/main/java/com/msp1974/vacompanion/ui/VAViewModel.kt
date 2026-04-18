@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import com.msp1974.vacompanion.broadcasts.BroadcastSender
 import com.msp1974.vacompanion.service.AudioRouteOption
 import com.msp1974.vacompanion.settings.APPConfig
-import com.msp1974.vacompanion.settings.PageLoadingStage
 import com.msp1974.vacompanion.utils.AppInfo
 import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
@@ -18,7 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import timber.log.Timber
 
 
 data class State(
@@ -39,7 +37,6 @@ data class State(
     var alertDialog: VADialog? = null,
     var permissions: PermissionsStatus = PermissionsStatus(),
     var updates: UpdateStatus = UpdateStatus(),
-    var webViewPageLoadingStage: PageLoadingStage = PageLoadingStage.NOT_STARTED,
     var showUUIDChangeDialog: Boolean = false,
 
     var showLauncher: Boolean = false,
@@ -195,15 +192,6 @@ class VAViewModel: ViewModel(), EventListener {
         _vacaState.update { currentState ->
             currentState.copy(
                 screenBlank = screenOn
-            )
-        }
-    }
-
-    fun setWebViewPageLoadingState(stage: PageLoadingStage) {
-        Timber.d("WebView page loading state: $stage")
-        _vacaState.update { currentState ->
-            currentState.copy(
-                webViewPageLoadingStage = stage
             )
         }
     }

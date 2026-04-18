@@ -11,6 +11,8 @@ import com.msp1974.vacompanion.sensors.BleGattManager
 import com.msp1974.vacompanion.sensors.BleGattServiceInfo
 import com.msp1974.vacompanion.sensors.BleScanner
 import com.msp1974.vacompanion.settings.APPConfig
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -196,6 +198,7 @@ class VacaHttpServer(
                 path == "/logs" && method == "GET"          -> handleLogsPage(socket)
                 path == "/logs/data"                        -> handleLogsData(socket, qp("level"), qp("filter"), qp("lines"))
                 path == "/i18n.js"                              -> handleI18nJs(socket)
+                path == "/ma/diagnose"                      -> handleMaDiagnose(socket)
                 path == "/"                                 -> handleIndex(socket)
                 else                                        -> sendError(socket, 404, "Not Found")
             }
@@ -326,6 +329,18 @@ class VacaHttpServer(
         sb.append(settingsRow("frequent_apps_count", "frequent_apps_count", """<input type="number" name="frequent_apps_count" min="1" max="50" value="${config.frequentAppsCount}">"""))
         sb.append("<div class=\"row\"><label id=\"l_usage_note\" style=\"color:#888;font-size:12px\"></label><button type=\"button\" onclick=\"openUsageSettings()\" id=\"t_usage_btn\" style=\"font-size:11px;padding:4px 10px;background:#555\"></button></div>")
         sb.append("</div>")
+
+        // Connections section
+        sb.append("<div class=\"card\"><h2>Connections</h2>")
+        sb.append("<p style=\"color:#888;font-size:12px;margin:0 0 8px\">Home Assistant direct connection (independent of satellite)</p>")
+        sb.append(settingsRow("ha_direct_url", "ha_direct_url", """<input type="text" name="ha_direct_url" placeholder="http://192.168.0.x:8123" value="${escapeHtml(config.haDirectUrl)}" style="width:100%;box-sizing:border-box">"""))
+        sb.append(settingsRow("ha_direct_token", "ha_direct_token", """<input type="password" name="ha_direct_token" placeholder="Long-Lived Access Token" value="${escapeHtml(config.haDirectToken)}" style="width:100%;box-sizing:border-box">"""))
+        sb.append("<p style=\"color:#888;font-size:12px;margin:8px 0\">Music Assistant connection</p>")
+        sb.append(settingsRow("ma_url", "ma_url", """<input type="text" name="ma_url" placeholder="http://192.168.0.x:8095" value="${escapeHtml(config.maUrl)}" style="width:100%;box-sizing:border-box">"""))
+        sb.append(settingsRow("ma_username", "ma_username", """<input type="text" name="ma_username" value="${escapeHtml(config.maUsername)}" style="width:100%;box-sizing:border-box">"""))
+        sb.append(settingsRow("ma_password", "ma_password", """<input type="password" name="ma_password" value="${escapeHtml(config.maPassword)}" style="width:100%;box-sizing:border-box">"""))
+        sb.append("</div>")
+
         sb.append("<button type=\"submit\" id=\"t_save\"></button><div id=\"status\"></div></form>")
 
         // JS: i18n labels + slider values + submit
@@ -375,6 +390,9 @@ class VacaHttpServer(
         sb.append("</script></body></html>")
         sendString(socket, sb.toString(), "text/html; charset=utf-8")
     }
+
+    private fun escapeHtml(s: String) =
+        s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
     private fun settingsRow(i18nKey: String, inputName: String, inputHtml: String) =
         "<div class=\"row\"><label data-i18n=\"$i18nKey\"></label>$inputHtml</div>"
@@ -427,6 +445,12 @@ class VacaHttpServer(
                     "recent_apps_enabled"          -> config.recentAppsEnabled = json.getBoolean(key)
                     "recent_apps_count"            -> config.recentAppsCount = json.getInt(key)
                     "frequent_apps_count"          -> config.frequentAppsCount = json.getInt(key)
+                    // Connection settings
+                    "ha_direct_url"   -> config.haDirectUrl   = json.getString(key).trim()
+                    "ha_direct_token" -> config.haDirectToken = json.getString(key).trim()
+                    "ma_url"          -> config.maUrl          = json.getString(key).trim()
+                    "ma_username"     -> config.maUsername     = json.getString(key).trim()
+                    "ma_password"     -> config.maPassword     = json.getString(key)
                 }
             }
             // If BLE max connections changed, push updated slot state to HA immediately
@@ -707,7 +731,7 @@ poll();
 
     private fun handleMjpegStream(socket: Socket) {
         if (!config.mjpegStreamEnabled) { sendError(socket, 503, "Stream disabled"); return }
-        val out = socket.getOutputStream()
+        val out = socket.getOutputStream().buffered(65536)
         try {
             out.write("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nCache-Control: no-cache\r\n\r\n".toByteArray())
             out.flush()
@@ -716,9 +740,13 @@ poll();
                 val intervalMs = 1000L / fps
                 val frame = mjpegFrameProvider?.invoke()
                 if (frame != null) {
-                    out.write("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.size}\r\n\r\n".toByteArray())
-                    out.write(frame)
-                    out.write("\r\n".toByteArray())
+                    val header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.size}\r\n\r\n".toByteArray()
+                    val tail = "\r\n".toByteArray()
+                    val packet = ByteArray(header.size + frame.size + tail.size)
+                    System.arraycopy(header, 0, packet, 0, header.size)
+                    System.arraycopy(frame, 0, packet, header.size, frame.size)
+                    System.arraycopy(tail, 0, packet, header.size + frame.size, tail.size)
+                    out.write(packet)
                     out.flush()
                 }
                 Thread.sleep(intervalMs)
@@ -730,6 +758,189 @@ poll();
         if (!config.mjpegStreamEnabled) { sendError(socket, 503, "Stream disabled"); return }
         val frame = mjpegFrameProvider?.invoke() ?: run { sendError(socket, 503, "No frame available"); return }
         sendBytes(socket, frame, "image/jpeg")
+    }
+
+    // ── MA Diagnostics ────────────────────────────────────────────────────────
+
+    private fun handleMaDiagnose(socket: Socket) {
+        val sb = StringBuilder()
+        sb.appendLine("MA Diagnostics — ${java.util.Date()}")
+        sb.appendLine("URL    : ${config.maUrl}")
+        sb.appendLine("User   : ${config.maUsername.ifEmpty { "(none)" }}")
+        sb.appendLine("Pass   : ${if (config.maPassword.isNotEmpty()) "*****(len=${config.maPassword.length})" else "(none)"}")
+        sb.appendLine()
+
+        val session = com.msp1974.vacompanion.ma.MaSession(
+            config.maUrl, config.maUsername, config.maPassword
+        )
+
+        // Reset cached token so we get a fresh auth result
+        com.msp1974.vacompanion.ma.MaApiClient.invalidateToken()
+
+        // ── Raw request helper (bypasses MaApiClient auth/parse) ────────────────
+        fun rawPost(path: String, jsonBody: String): String {
+            val trustAll = object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(
+                    chain: Array<out java.security.cert.X509Certificate>,
+                    authType: String
+                ) {
+                }
+                override fun checkServerTrusted(
+                    chain: Array<out java.security.cert.X509Certificate>,
+                    authType: String
+                ) {
+                }
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            }
+            return runCatching {
+                val client = kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val sslContext = javax.net.ssl.SSLContext.getInstance("TLS").apply {
+                            init(
+                                null,
+                                arrayOf<javax.net.ssl.TrustManager>(trustAll),
+                                java.security.SecureRandom()
+                            )
+                        }
+                        okhttp3.OkHttpClient.Builder()
+                            .sslSocketFactory(sslContext.socketFactory, trustAll)
+                            .hostnameVerifier { _, _ -> true }
+                            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
+                    }
+                }
+                val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val req = okhttp3.Request.Builder()
+                    .url("${config.maUrl.trimEnd('/')}$path")
+                    .post(body).build()
+                client.newCall(req).execute().use { resp ->
+                    "HTTP ${resp.code}: ${resp.body?.string()?.take(400) ?: "(no body)"}"
+                }
+            }.getOrElse { "EXCEPTION: $it" }
+        }
+
+        // ── Auth probe ───────────────────────────────────────────────────────────
+        sb.appendLine("=== AUTH PROBE ===")
+        if (config.maUsername.isNotEmpty()) {
+            val authResp = rawPost("/api", """{"command":"auth/login","args":{"username":"${config.maUsername}","password":"${config.maPassword}"}}""")
+            sb.appendLine("auth/login: $authResp")
+        }
+        // Try root browse without auth
+        val noAuthResp = rawPost("/api", """{"command":"music/browse","args":{"limit":5}}""")
+        sb.appendLine("music/browse (no auth): $noAuthResp")
+        // Try root browse with password as Bearer
+        if (config.maPassword.isNotEmpty()) {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val authBrowseResp = runCatching {
+                val body = """{"command":"music/browse","args":{"limit":5}}"""
+                    .toRequestBody("application/json; charset=utf-8".toMediaType())
+                val req = okhttp3.Request.Builder()
+                    .url("${config.maUrl.trimEnd('/')}/api")
+                    .post(body)
+                    .header("Authorization", "Bearer ${config.maPassword}")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    "HTTP ${resp.code}: ${resp.body?.string()?.take(400) ?: "(no body)"}"
+                }
+            }.getOrElse { "EXCEPTION: $it" }
+            sb.appendLine("music/browse (Bearer=password): $authBrowseResp")
+        }
+        sb.appendLine()
+
+        fun browseItems(path: String) = runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.msp1974.vacompanion.ma.MaApiClient.browsePath(session, path, limit = 50)
+            }
+        }.getOrElse { emptyList() }
+
+        fun browseRaw(path: String): String = runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.msp1974.vacompanion.ma.MaApiClient.browsePathRaw(session, path, limit = 10)
+            }
+        }.getOrElse { "EXCEPTION: $it" }
+
+        fun printItems(items: List<com.msp1974.vacompanion.ma.MaBrowseItem>) {
+            if (items.isEmpty()) { sb.appendLine("  (empty)"); return }
+            items.forEach { item ->
+                sb.appendLine("  [${item.mediaType}] name='${item.name}' path='${item.path}' playable=${item.isPlayable}")
+            }
+        }
+
+        // ── Root
+        val rootItems = browseItems("")
+        sb.appendLine("=== ROOT (${rootItems.size} items) ===")
+        if (rootItems.isEmpty()) sb.appendLine("  RAW: ${browseRaw("").take(300)}")
+        printItems(rootItems)
+        sb.appendLine()
+
+        val recCandidates = listOf("recommendations", "featured", "new_releases", "suggestions")
+
+        // ── Each root provider
+        rootItems.forEach { root ->
+            sb.appendLine("=== ${root.name} (${root.path}) ===")
+
+            // Show the provider's own root browse (may be empty for some providers)
+            val provSubs = browseItems(root.path)
+            if (provSubs.isEmpty()) {
+                sb.appendLine("  (provider root browse returned empty — trying direct sub-paths)")
+            } else {
+                printItems(provSubs)
+            }
+
+            if (root.path.startsWith("builtin")) {
+                // For builtin: drill into interesting folders
+                provSubs.filter { sub ->
+                    val n = sub.name.lowercase()
+                    "recommend" in n || "recent" in n || "playlist" in n || "track" in n
+                }.forEach { sub ->
+                    sb.appendLine("  >> ${sub.name} [${sub.mediaType}] (${sub.path}) →")
+                    val subItems = browseItems(sub.path)
+                    subItems.take(5).forEach { item ->
+                        sb.appendLine("     [${item.mediaType}] '${item.name}' path='${item.path}'")
+                    }
+                    if (subItems.size > 5) sb.appendLine("     ... (${subItems.size} total)")
+                    if (subItems.isEmpty()) sb.appendLine("     (empty)")
+                }
+            } else {
+                // For non-builtin providers: probe direct sub-paths (same as MaHomeView Step 4)
+                sb.appendLine("  Probing direct recommendation paths:")
+                for (candidate in recCandidates) {
+                    val candidatePath = "${root.path}$candidate"
+                    val items = browseItems(candidatePath)
+                    sb.appendLine("  [$candidatePath] → ${items.size} items")
+                    if (items.isNotEmpty()) {
+                        val subFolders  = items.filter { it.mediaType == "folder" }
+                        val directItems = items.filter { it.mediaType != "folder" }
+                        if (subFolders.isNotEmpty()) {
+                            sb.appendLine("    Sub-folders (${subFolders.size}):")
+                            subFolders.take(5).forEach { sub ->
+                                sb.appendLine("      [folder] '${sub.name}' path='${sub.path}'")
+                                val leafItems = browseItems(sub.path)
+                                leafItems.take(3).forEach { leaf ->
+                                    sb.appendLine("        -> [${leaf.mediaType}] '${leaf.name}'")
+                                }
+                                if (leafItems.size > 3) sb.appendLine("        -> ... (${leafItems.size} total)")
+                            }
+                        }
+                        if (directItems.isNotEmpty()) {
+                            sb.appendLine("    Direct items (${directItems.size}) → 1 row '${candidate.replaceFirstChar { it.uppercaseChar() }}':")
+                            directItems.take(5).forEach { item ->
+                                sb.appendLine("      [${item.mediaType}] '${item.name}' path='${item.path}'")
+                            }
+                            if (directItems.size > 5) sb.appendLine("      ... (${directItems.size} total)")
+                        }
+                        break  // found a valid candidate
+                    }
+                }
+            }
+            sb.appendLine()
+        }
+
+        sendString(socket, sb.toString(), "text/plain; charset=utf-8")
     }
 
     // ── Status ────────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 package com.msp1974.vacompanion.launcher
 
+import android.content.Intent
 import android.os.Bundle
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -26,15 +28,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +59,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.ui.layouts.AppIconImage
+import com.msp1974.vacompanion.ui.layouts.FloatingLauncherBar
+import com.msp1974.vacompanion.ui.layouts.HaControlScreen
+import com.msp1974.vacompanion.ui.layouts.HaSettingsDialog
+import com.msp1974.vacompanion.ui.layouts.MaSettingsDialog
 import com.msp1974.vacompanion.utils.AppInfo
 import com.msp1974.vacompanion.utils.InstalledAppsManager
 import com.msp1974.vacompanion.utils.RecentAppsManager
@@ -71,35 +74,96 @@ private val AccentColor = Color(0xFF7C6FCD)
 
 class LauncherActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_PAGE       = "page"
+        const val PAGE_APPS        = 0
+        const val PAGE_SMART_HOME  = 1
+    }
+
     private lateinit var config: APPConfig
+    private val currentPage = mutableIntStateOf(PAGE_APPS)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = APPConfig.getInstance(this)
+        currentPage.intValue = intent.getIntExtra(EXTRA_PAGE, config.launcherHomePage)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (currentPage.intValue != config.launcherHomePage) {
+                    currentPage.intValue = config.launcherHomePage
+                }
+                // 已在主畫面：不 moveTaskToBack、不 finish，僅消耗返回鍵，畫面維持不變
+            }
+        })
 
         setContent {
             LauncherScreen(
                 config = config,
-                onReturnToHA = {
-                    startActivity(HADashboardActivity.buildIntent(this))
-                }
+                page   = currentPage.intValue
             )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        currentPage.intValue = intent.getIntExtra(EXTRA_PAGE, config.launcherHomePage)
     }
 }
 
 @Composable
-private fun LauncherScreen(config: APPConfig, onReturnToHA: () -> Unit) {
+private fun LauncherScreen(config: APPConfig, page: Int) {
+    val isSmartHome = page == LauncherActivity.PAGE_SMART_HOME
+    var showMaSettings by remember { mutableStateOf(false) }
+    var showHaSettings by remember { mutableStateOf(false) }
+    // Increment to force HaControlScreen to rebuild its session after HA settings are saved
+    var haSessionVersion by remember { mutableStateOf(0) }
+
+    Box(modifier = Modifier.fillMaxSize().background(BackgroundColor)) {
+        // ── Page content ─────────────────────────────────────────────────
+        if (isSmartHome) {
+            HaControlScreen(
+                config           = config,
+                sessionVersion   = haSessionVersion,
+                onHaSettingsClick = { showHaSettings = true }
+            )
+        } else {
+            AppsPage(config)
+        }
+
+        // ── 浮動工具列 overlay ────────────────────────────────────────────────
+        FloatingLauncherBar(
+            config            = config,
+            onSmartHomeClick  = {},
+            onMaSettingsClick = { showMaSettings = true },
+            onHaSettingsClick = { showHaSettings = true }
+        )
+    }
+
+    if (showMaSettings) {
+        MaSettingsDialog(config = config, onDismiss = { showMaSettings = false })
+    }
+    if (showHaSettings) {
+        HaSettingsDialog(
+            config    = config,
+            onDismiss = { showHaSettings = false },
+            onSave    = { haSessionVersion++ }
+        )
+    }
+}
+
+// ── Apps page (existing launcher logic extracted) ─────────────────────────────
+
+@Composable
+private fun AppsPage(config: APPConfig) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val shortcutsManager = remember { ShortcutsManager(config) }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val focusManager = LocalFocusManager.current
-
     var contextMenuApp by remember { mutableStateOf<AppInfo?>(null) }
 
-    // Use the static cache as initialValue so the grid shows instantly if already pre-loaded
     val allApps by produceState(initialValue = InstalledAppsManager.cache ?: emptyList()) {
         value = InstalledAppsManager(context).getAllApps("")
     }
@@ -119,141 +183,84 @@ private fun LauncherScreen(config: APPConfig, onReturnToHA: () -> Unit) {
         shortcutsManager.getPinnedShortcuts()
             .mapNotNull { pkg -> allApps.find { it.packageName == pkg } }
     ) }
-
-    // Refresh pinned list when allApps loads
     val resolvedPinned by produceState(initialValue = emptyList<AppInfo>(), allApps) {
         value = shortcutsManager.getPinnedShortcuts()
             .mapNotNull { pkg -> allApps.find { it.packageName == pkg } }
     }
     pinnedApps = resolvedPinned
 
-    val tabs = listOf("All", "Recent", "Frequent", "Pinned")
-    val query = searchQuery.trim().lowercase()
+    val appTabs = listOf("All", "Recent", "Frequent", "Pinned")
     val displayedApps: List<AppInfo> = remember(selectedTab, searchQuery, allApps, recentApps, frequentApps, pinnedApps) {
         val q = searchQuery.trim().lowercase()
         val source = when (selectedTab) {
-            1 -> recentApps
-            2 -> frequentApps
-            3 -> pinnedApps
+            1    -> recentApps
+            2    -> frequentApps
+            3    -> pinnedApps
             else -> allApps
         }
         if (q.isEmpty()) source
         else source.filter { it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q) }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BackgroundColor)
-    ) {
-        // Top bar
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(SurfaceColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            Text(
-                text = "Apps",
-                color = Color.White,
-                fontSize = 20.sp,
-                modifier = Modifier.weight(1f)
-            )
-            Button(
-                onClick = onReturnToHA,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = AccentColor,
-                    contentColor = Color.White
-                )
-            ) {
-                Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.size(6.dp))
-                Text("Return to HA", fontSize = 13.sp)
-            }
-        }
-
-        // Search bar
+    Column(modifier = Modifier.fillMaxSize()) {
         LauncherSearchBar(
-            query = searchQuery,
+            query         = searchQuery,
             onQueryChange = { searchQuery = it },
-            onClear = { searchQuery = "" },
-            onDone = { focusManager.clearFocus() },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+            onClear       = { searchQuery = "" },
+            onDone        = { focusManager.clearFocus() },
+            modifier      = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
         )
-
-        // Tab row
-        ScrollableTabRow(
+        PrimaryScrollableTabRow(
             selectedTabIndex = selectedTab,
-            containerColor = SurfaceColor,
-            contentColor = Color.White,
-            edgePadding = 16.dp
+            containerColor   = SurfaceColor,
+            contentColor     = Color.White,
+            edgePadding      = 16.dp
         ) {
-            tabs.forEachIndexed { index, title ->
+            appTabs.forEachIndexed { index, title ->
                 Tab(
                     selected = selectedTab == index,
-                    onClick = {
-                        selectedTab = index
-                        searchQuery = ""
-                        focusManager.clearFocus()
-                    },
+                    onClick  = { selectedTab = index; searchQuery = ""; focusManager.clearFocus() },
                     text = {
-                        Text(
-                            text = title,
-                            color = if (selectedTab == index) Color.White else Color.White.copy(alpha = 0.5f)
-                        )
+                        Text(title, color = if (selectedTab == index) Color.White else Color.White.copy(alpha = 0.5f))
                     }
                 )
             }
         }
-
-        // App grid
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 96.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+            columns             = GridCells.Adaptive(minSize = 112.dp),
+            contentPadding      = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxSize()
+            modifier            = Modifier.fillMaxSize()
         ) {
             items(displayedApps, key = { it.packageName }) { app ->
                 LauncherAppItem(
-                    app = app,
-                    isPinned = shortcutsManager.isPinned(app.packageName),
-                    onClick = {
-                        focusManager.clearFocus()
-                        launchApp(context, app.packageName)
-                    },
+                    app       = app,
+                    isPinned  = shortcutsManager.isPinned(app.packageName),
+                    onClick   = { focusManager.clearFocus(); launchApp(context, app.packageName) },
                     onLongClick = { contextMenuApp = app }
                 )
             }
         }
     }
 
-    // Long-press context menu
     contextMenuApp?.let { app ->
         val isPinned = shortcutsManager.isPinned(app.packageName)
         AlertDialog(
             onDismissRequest = { contextMenuApp = null },
-            title = { Text(app.label) },
-            text = {
-                Text(if (isPinned) "Remove '${app.label}' from pinned shortcuts?" else "Pin '${app.label}' to shortcuts?")
+            title            = { Text(app.label) },
+            text             = {
+                Text(if (isPinned) "Remove '${app.label}' from pinned?" else "Pin '${app.label}'?")
             },
             confirmButton = {
                 TextButton(onClick = {
                     if (isPinned) shortcutsManager.unpinShortcut(app.packageName)
                     else shortcutsManager.pinShortcut(app.packageName)
                     contextMenuApp = null
-                }) {
-                    Text(if (isPinned) "Unpin" else "Pin")
-                }
+                }) { Text(if (isPinned) "Unpin" else "Pin") }
             },
             dismissButton = {
-                TextButton(onClick = { contextMenuApp = null }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { contextMenuApp = null }) { Text("Cancel") }
             },
             containerColor = SurfaceColor
         )
@@ -283,7 +290,7 @@ private fun LauncherAppItem(
             .background(if (isPinned) AccentColor.copy(alpha = 0.2f) else Color.Transparent)
             .padding(vertical = 8.dp, horizontal = 4.dp)
     ) {
-        AppIconImage(packageName = app.packageName, sizeDp = 56)
+        AppIconImage(packageName = app.packageName, sizeDp = 72)
         Text(
             text = app.label,
             color = Color.White,

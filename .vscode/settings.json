@@ -1,3 +1,5 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "kotlin.compiler.jvm.target": "11",
+    "kotlin.diagnostics.enabled": false
 }

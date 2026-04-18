@@ -155,7 +155,9 @@ internal class BackgroundTaskController (private val context: Context): EventLis
 
                     scope.launch {
                         delay(2000)
-                        audioRoute = AudioRouteOption.DETECT
+                        if (server.pipelineClient != null) {
+                            audioRoute = AudioRouteOption.DETECT
+                        }
                     }
                 }
                 engine?.setStreaming(false)
@@ -276,15 +278,16 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             }
             "httpServerEnabled" -> {
                 if (event.newValue as Boolean) {
-                    // Stop any existing server first to free the port
                     httpServer?.stop()
                     httpServer = null
-                    Thread.sleep(200) // Brief wait for OS to release port
-                    httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
-                    httpServer?.mjpegFrameProvider = { motionTask.latestJpegFrame }
-                    httpServer?.bleScanner = bleScanner
-                    httpServer?.bleGattManager = bleGattManager
-                    httpServer?.start()
+                    scope.launch {
+                        delay(200) // Brief wait for OS to release port
+                        httpServer = VacaHttpServer(context, APPConfig.HTTP_SERVER_PORT)
+                        httpServer?.mjpegFrameProvider = { motionTask.latestJpegFrame }
+                        httpServer?.bleScanner = bleScanner
+                        httpServer?.bleGattManager = bleGattManager
+                        httpServer?.start()
+                    }
                 } else {
                     httpServer?.stop()
                     httpServer = null

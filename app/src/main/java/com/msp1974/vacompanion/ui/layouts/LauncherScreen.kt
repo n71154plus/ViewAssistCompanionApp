@@ -2,6 +2,9 @@ package com.msp1974.vacompanion.ui.layouts
 
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import android.util.LruCache
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -61,6 +64,9 @@ import com.msp1974.vacompanion.utils.RecentAppsManager
 
 private val BackgroundColor = Color(0xE6000000)  // 90% opaque black
 
+// Process-lifetime icon cache — survives launcher open/close cycles
+private val iconCache = object : LruCache<String, ImageBitmap>(200) {}
+
 @Composable
 fun LauncherScreen(
     onDismiss: () -> Unit,
@@ -72,16 +78,17 @@ fun LauncherScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val focusManager = LocalFocusManager.current
 
-    // Load app lists once, reuse from viewmodel if already populated
+    // Load app lists once on IO thread, reuse from viewmodel if already populated
     val allApps by produceState(initialValue = vaViewModel.vacaState.value.launcherApps) {
         if (vaViewModel.vacaState.value.launcherApps.isEmpty()) {
-            val apps = InstalledAppsManager(context).getAllApps("")
-            val recent = if (RecentAppsManager(context).hasUsagePermission())
-                RecentAppsManager(context).getRecentApps(20)
-            else emptyList()
-            val frequent = if (RecentAppsManager(context).hasUsagePermission())
-                RecentAppsManager(context).getFrequentApps(20)
-            else emptyList()
+            val apps = withContext(Dispatchers.IO) { InstalledAppsManager(context).getAllApps("") }
+            val recentMgr = RecentAppsManager(context)
+            val recent = withContext(Dispatchers.IO) {
+                if (recentMgr.hasUsagePermission()) recentMgr.getRecentApps(20) else emptyList()
+            }
+            val frequent = withContext(Dispatchers.IO) {
+                if (recentMgr.hasUsagePermission()) recentMgr.getFrequentApps(20) else emptyList()
+            }
             vaViewModel.setLauncherData(apps, recent, frequent)
             value = apps
         }
@@ -152,7 +159,7 @@ fun LauncherScreen(
 
             // App grid
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 96.dp),
+                columns = GridCells.Adaptive(minSize = 112.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -218,7 +225,7 @@ private fun AppGridItem(app: AppInfo, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(vertical = 8.dp, horizontal = 4.dp)
     ) {
-        AppIconImage(packageName = app.packageName, sizeDp = 56)
+        AppIconImage(packageName = app.packageName, sizeDp = 72)
         Text(
             text = app.label,
             color = Color.White,
@@ -234,14 +241,23 @@ private fun AppGridItem(app: AppInfo, onClick: () -> Unit) {
 }
 
 @Composable
-fun AppIconImage(packageName: String, sizeDp: Int = 56) {
+fun AppIconImage(packageName: String, sizeDp: Int = 72) {
     val context = LocalContext.current
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, packageName) {
-        value = try {
-            val drawable: Drawable = context.packageManager.getApplicationIcon(packageName)
-            drawable.toBitmap(sizeDp * 2, sizeDp * 2).asImageBitmap()
-        } catch (e: PackageManager.NameNotFoundException) { null }
-        catch (e: Exception) { null }
+    val density = context.resources.displayMetrics.density
+    val pxSize = (sizeDp * density).toInt().coerceAtLeast(1)
+    // Use cached bitmap as initialValue — if already loaded, renders instantly with no recomposition
+    val bitmap by produceState<ImageBitmap?>(initialValue = iconCache[packageName], packageName) {
+        if (value == null) {
+            value = withContext(Dispatchers.IO) {
+                try {
+                    val drawable: Drawable = context.packageManager.getApplicationIcon(packageName)
+                    drawable.toBitmap(pxSize, pxSize).asImageBitmap().also { bmp ->
+                        iconCache.put(packageName, bmp)
+                    }
+                } catch (e: PackageManager.NameNotFoundException) { null }
+                catch (e: Exception) { null }
+            }
+        }
     }
     if (bitmap != null) {
         Image(

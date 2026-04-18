@@ -21,6 +21,8 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import com.msp1974.vacompanion.launcher.LauncherActivity
+import com.msp1974.vacompanion.settings.APPConfig
 import timber.log.Timber
 
 class AppExceptionHandler(private val activity: Activity) : Thread.UncaughtExceptionHandler {
@@ -28,10 +30,17 @@ class AppExceptionHandler(private val activity: Activity) : Thread.UncaughtExcep
         Timber.e("AppExceptionHandler: $ex")
         ex.printStackTrace()
 
-        val intent = Intent(activity, MainActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
-                or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                or Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(activity, LauncherActivity::class.java).apply {
+            putExtra(
+                LauncherActivity.EXTRA_PAGE,
+                APPConfig.getInstance(activity.applicationContext).launcherHomePage
+            )
+            addFlags(
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    or Intent.FLAG_ACTIVITY_NEW_TASK
+            )
+        }
         val pendingIntent = PendingIntent.getActivity(
             activity.applicationContext, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

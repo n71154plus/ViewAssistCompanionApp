@@ -26,15 +26,6 @@ enum class BackgroundTaskStatus {
     STARTED,
 }
 
-enum class PageLoadingStage {
-    NOT_STARTED,
-    STARTED,
-    AUTHORISING,
-    AUTHORISED,
-    LOADED,
-    AUTH_FAILED,
-}
-
 class APPConfig(val context: Context) {
     private val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(context.applicationContext)
     private val log = Logger()
@@ -242,6 +233,10 @@ class APPConfig(val context: Context) {
         get() = this.sharedPrefs.getBoolean("can_set_notification_policy_access", true)
         set(value) = this.sharedPrefs.edit { putBoolean("can_set_notification_policy_access", value) }
 
+    var canRequestUsageAccess: Boolean
+        get() = this.sharedPrefs.getBoolean("can_request_usage_access", true)
+        set(value) = this.sharedPrefs.edit { putBoolean("can_request_usage_access", value) }
+
     var showFloatingLauncherBar: Boolean
         get() = this.sharedPrefs.getBoolean("show_floating_launcher_bar", true)
         set(value) = this.sharedPrefs.edit { putBoolean("show_floating_launcher_bar", value) }
@@ -253,6 +248,21 @@ class APPConfig(val context: Context) {
     var floatingBarPositionY: Float
         get() = this.sharedPrefs.getFloat("floating_bar_position_y", 0.5f)
         set(value) = this.sharedPrefs.edit { putFloat("floating_bar_position_y", value) }
+
+    /**
+     * Launcher 內「主畫面」：0 = Apps、1 = Smart Home。
+     * 系統返回鍵會先回到此頁，已在該頁時才將工作列移到背景。
+     */
+    var launcherHomePage: Int
+        get() = this.sharedPrefs.getInt("launcher_home_page", 0)
+        set(value) {
+            val v = value.coerceIn(0, 1)
+            this.sharedPrefs.edit { putInt("launcher_home_page", v) }
+        }
+
+    var customUrl1: String
+        get() = this.sharedPrefs.getString("custom_url_1", "http://192.168.0.2:8095") ?: "http://192.168.0.2:8095"
+        set(value) = this.sharedPrefs.edit { putString("custom_url_1", value) }
 
     var showShortcutDock: Boolean
         get() = this.sharedPrefs.getBoolean("show_shortcut_dock", false)
@@ -391,6 +401,29 @@ class APPConfig(val context: Context) {
             this.sharedPrefs.edit { putBoolean("recent_apps_enabled", value) }
             eventBroadcaster.notifyEvent(Event("recentAppsEnabled", !value, value))
         }
+
+    // Home Assistant direct connection settings (independent of satellite)
+    var haDirectUrl: String
+        get() = this.sharedPrefs.getString("ha_direct_url", "") ?: ""
+        set(value) = this.sharedPrefs.edit { putString("ha_direct_url", value) }
+
+    /** Long-Lived Access Token created in HA → User Settings → Long-Lived Access Tokens */
+    var haDirectToken: String
+        get() = this.sharedPrefs.getString("ha_direct_token", "") ?: ""
+        set(value) = this.sharedPrefs.edit { putString("ha_direct_token", value) }
+
+    // Music Assistant connection settings
+    var maUrl: String
+        get() = this.sharedPrefs.getString("ma_url", "http://192.168.0.2:8095") ?: "http://192.168.0.2:8095"
+        set(value) = this.sharedPrefs.edit { putString("ma_url", value) }
+
+    var maUsername: String
+        get() = this.sharedPrefs.getString("ma_username", "") ?: ""
+        set(value) = this.sharedPrefs.edit { putString("ma_username", value) }
+
+    var maPassword: String
+        get() = this.sharedPrefs.getString("ma_password", "") ?: ""
+        set(value) = this.sharedPrefs.edit { putString("ma_password", value) }
 
     fun processSettings(settingString: String) {
         initSettings = true

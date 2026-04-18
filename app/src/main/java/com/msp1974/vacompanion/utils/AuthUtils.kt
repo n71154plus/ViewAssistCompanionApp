@@ -2,11 +2,7 @@ package com.msp1974.vacompanion.utils
 
 import android.annotation.SuppressLint
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.webkit.WebView
 import androidx.core.net.toUri
-import com.msp1974.vacompanion.jsinterface.ExternalAuthCallback
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -15,115 +11,11 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import com.msp1974.vacompanion.settings.APPConfig
-import com.msp1974.vacompanion.settings.PageLoadingStage
 import kotlin.random.Random
 
 data class AuthToken(val tokenType: String = "", val accessToken: String = "", val expires: Long = 0, val refreshToken: String = "")
 
-class AuthUtils(val config: APPConfig) {
-
-    // Add external auth callback for HA authentication
-    val externalAuthCallback = object : ExternalAuthCallback {
-        override fun onRequestExternalAuth(view: WebView) {
-            log.d("External auth callback in progress...")
-            setAuthStage(view, PageLoadingStage.AUTHORISING)
-            if (config.refreshToken == "") {
-                log.d("No refresh token.  Proceeding to login screen")
-                loadUrl(view, getAuthUrl(getHAUrl(config, withDashboardPath = false)), clearCache = true)
-                setAuthStage(view, PageLoadingStage.AUTH_FAILED)
-                return
-            } else if (System.currentTimeMillis() > (config.tokenExpiry - 120) && config.refreshToken != "") {
-                // Token will expire in less than 2 mins, consider expired
-                // Need to get new access token as it has expired
-                log.d("Auth token has expired.  Requesting new token using refresh token")
-                val success: Boolean = reAuthWithRefreshToken()
-                if (success) {
-                    log.d("Authorising with new token")
-                    callAuthJS(view)
-                    setAuthStage(view, PageLoadingStage.AUTHORISED)
-                } else {
-                    log.d("Failed to refresh auth token.  Proceeding to login screen")
-                    setAuthStage(view, PageLoadingStage.AUTH_FAILED)
-                    loadUrl(view, getAuthUrl(getHAUrl(config, withDashboardPath = false)), clearCache = true)
-                }
-            } else if (config.accessToken != "") {
-                log.d("Auth token is still valid - authorising")
-                setAuthStage(view, PageLoadingStage.AUTHORISED)
-                callAuthJS(view)
-            }
-        }
-
-        override fun onRequestRevokeExternalAuth(view: WebView) {
-            log.d("External auth revoke callback in progress...")
-            config.accessToken = ""
-            config.refreshToken = ""
-            config.tokenExpiry = 0
-            setAuthStage(view, PageLoadingStage.AUTH_FAILED)
-            loadUrl(view, getAuthUrl(getHAUrl(config)))
-        }
-
-        private fun setAuthStage(view: WebView, stage: PageLoadingStage) {
-            Handler(Looper.getMainLooper()).post({
-                val w = view as CustomWebView
-                w.setPageLoadingState(stage)
-            })
-        }
-
-        private fun loadUrl(view: WebView, url: String, clearCache: Boolean = false) {
-            log.d("Loading URL: $url")
-            Handler(Looper.getMainLooper()).post({
-                if (clearCache) {
-                    view.clearCache(true)
-                }
-                view.loadUrl(url)
-            })
-        }
-
-        private fun callAuthJS(view: WebView) {
-            Handler(Looper.getMainLooper()).post({
-                view.evaluateJavascript(
-                    "window.externalAuthSetToken(true, {\n" +
-                            "\"access_token\": \"${config.accessToken}\",\n" +
-                            "\"expires_in\": 1800\n" +
-                            "});",
-                    null
-                )
-            })
-        }
-
-        private fun reAuthWithRefreshToken(): Boolean {
-            log.d("Auth token has expired.  Requesting new token using refresh token")
-            val auth = refreshAccessToken(
-                getHAUrl(config),
-                config.refreshToken,
-                !config.ignoreSSLErrors
-            )
-            if (auth.accessToken != "" && auth.expires > System.currentTimeMillis()) {
-                log.d("Received new auth token")
-                config.accessToken = auth.accessToken
-
-                // Manage any diff to device time
-                val diff = auth.expires - System.currentTimeMillis()
-                config.tokenExpiry = System.currentTimeMillis() + diff
-                return true
-            } else {
-                return false
-            }
-        }
-
-        private fun tokenExpiryRefreshTask(view: WebView) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    if (System.currentTimeMillis() > config.tokenExpiry && config.refreshToken != "") {
-                        if (reAuthWithRefreshToken()) {
-                            callAuthJS(view)
-                        }
-                    }
-                    tokenExpiryRefreshTask(view)
-                } catch (e: Exception) {}
-            }, 30000)
-        }
-    }
+class AuthUtils {
 
     companion object {
         val log = Logger()
